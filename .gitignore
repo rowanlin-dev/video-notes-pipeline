@@ -1,0 +1,49 @@
+# 敏感配置
+.env
+bilibili_cookies.txt
+*.key
+*.pem
+
+# 个人学习出来的黑名单（可脱敏后分享，默认不上传）
+trash_learned.json
+使用说明.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+
+# 运行产物（视频、帧、笔记、PDF）
+runs/
+# 本地冒烟测试产物（demo/render/mock）
+_smoketest/
+*.mp4
+*.flv
+*.mkv
+*.mov
+*.avi
+*.pdf
+*.html
+
+# 日志
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 损坏仓库备份（rebuild 时重命名，非项目内容）
+.git.bak/

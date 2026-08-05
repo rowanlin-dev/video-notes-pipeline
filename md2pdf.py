@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Markdown -> PDF（保留内嵌图片，供 ima 知识库入库）
+=================================================
+先把 Markdown 渲染成带样式的 HTML，再调用系统 Edge/Chrome 无头模式打印为 PDF。
+选这条路的原因：中文字体、图片、超链接都能原样保留，且 Windows 必带 Edge，无需额外依赖。
+
+用法：
+  python md2pdf.py --input ./output/note.md --output ./output/note.pdf
+"""
+import os
+import re
+import sys
+import shutil
+import argparse
+import subprocess
+from pathlib import Path
+
+try:
+    import markdown as md_lib
+except ImportError:
+    md_lib = None
+
+
+BROWSER_CANDIDATES = [
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+]
+
+CSS = """
+@page { size: A4; margin: 18mm 16mm; }
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", "Source Han Sans SC", sans-serif;
+  font-size: 11.5pt; line-height: 1.85; color: #1a1a1a; margin: 0;
+}
+h1 { font-size: 20pt; border-bottom: 2px solid #333; padding-bottom: 8px; margin: 0 0 18px; }
+h2 { font-size: 15pt; margin: 24px 0 10px; padding-left: 9px; border-left: 4px solid #4a6fa5; }
+h3 { font-size: 13pt; margin: 18px 0 8px; color: #2c4a70; }
+p  { margin: 8px 0; text-align: justify; }
+blockquote {
+  margin: 10px 0; padding: 8px 14px; background: #f5f7fa;
+  border-left: 3px solid #b8c4d4; color: #555; font-size: 10.5pt;
+}
+img { max-width: 100%; display: block; margin: 12px auto 4px; border: 1px solid #ddd; border-radius: 3px; }
+div[align="center"] { text-align: center; font-size: 9.5pt; color: #666; margin-bottom: 16px; }
+a { color: #4a6fa5; text-decoration: none; }
+code { background: #f2f2f2; padding: 1px 5px; border-radius: 3px; font-size: 10pt; }
+pre { background: #f7f7f7; padding: 10px 12px; border-radius: 4px; overflow-x: auto; }
+pre code { background: none; }
+ul, ol { padding-left: 24px; }
+li { margin: 4px 0; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 10.5pt; }
+th, td { border: 1px solid #ccc; padding: 6px 10px; }
+th { background: #eef2f7; }
+hr { border: none; border-top: 1px solid #ddd; margin: 18px 0; }
+"""
+
+
+def find_browser():
+    for p in BROWSER_CANDIDATES:
+        if Path(p).exists():
+            return p
+    for name in ("msedge", "chrome"):
+        p = shutil.which(name)
+        if p:
+            return p
+    return None
+
+
+def md_to_html(md_text: str, base_dir: Path, title: str) -> str:
+    if md_lib is None:
+        raise RuntimeError("缺少依赖：pip install markdown")
+    body = md_lib.markdown(
+        md_text,
+        extensions=["tables", "fenced_code", "nl2br", "md_in_html"],
+    )
+    base_uri = base_dir.resolve().as_uri() + "/"
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<base href="{base_uri}">
+<title>{title}</title><style>{CSS}</style></head>
+<body>{body}</body></html>"""
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Markdown 转 PDF（内嵌图片）")
+    ap.add_argument("--input", required=True)
+    ap.add_argument("--output", default=None)
+    ap.add_argument("--keep-html", action="store_true", help="保留中间 HTML 便于排查")
+    args = ap.parse_args()
+
+    src = Path(args.input)
+    if not src.exists():
+        print(f"[error] 找不到输入文件: {src}", file=sys.stderr)
+        sys.exit(1)
+
+    out_pdf = Path(args.output) if args.output else src.with_suffix(".pdf")
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+
+    md_text = src.read_text(encoding="utf-8")
+    title = src.stem
+    m = re.search(r"^#\s+(.+)$", md_text, re.M)
+    if m:
+        title = m.group(1).strip()
+
+    html_path = src.with_suffix(".html")
+    html_path.write_text(md_to_html(md_text, src.parent, title), encoding="utf-8")
+
+    browser = find_browser()
+    if not browser:
+        print("[error] 未找到 Edge/Chrome，无法生成 PDF。HTML 已保留：" + str(html_path),
+              file=sys.stderr)
+        sys.exit(2)
+
+    cmd = [
+        browser, "--headless=new", "--disable-gpu", "--no-sandbox",
+        "--no-pdf-header-footer", "--run-all-compositor-stages-before-draw",
+        "--virtual-time-budget=10000",
+        f"--print-to-pdf={out_pdf.resolve()}",
+        html_path.resolve().as_uri(),
+    ]
+    print(f"[pdf] 使用 {Path(browser).name} 打印 ...")
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+
+    if not out_pdf.exists():
+        print("[error] PDF 生成失败", file=sys.stderr)
+        print(r.stderr[-1500:], file=sys.stderr)
+        sys.exit(3)
+
+    if not args.keep_html:
+        try:
+            html_path.unlink()
+        except OSError:
+            pass
+
+    size_kb = out_pdf.stat().st_size / 1024
+    print(f"[done] PDF: {out_pdf}  ({size_kb:.0f} KB)")
+
+
+if __name__ == "__main__":
+    main()
