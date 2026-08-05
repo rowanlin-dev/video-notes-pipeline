@@ -1,102 +1,111 @@
 ---
 name: bilibili-video-notes
-description: "从 B 站教育/讲课视频生成带截图的 DOCX 学习笔记。下载视频+字幕→全覆盖抽帧→OCR去重→AI视觉打分→提取图中内容→融合生成DOCX。"
-tags: [bilibili, video, notes, OCR, vision, subtitles, docx]
+description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
+tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima]
 triggers:
   - bilibili视频笔记
   - 视频笔记
   - 从视频做笔记
   - video notes
+  - 把b站视频做成笔记
 ---
 
 # Bilibili Video Notes
 
-从 B 站教育/讲课视频生成带截图的 DOCX 学习笔记。
+从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性一键归档进 ima 知识库。
+
+> 全流程模型免费档即可跑（智谱 GLM-4V-Flash 识图 / GLM-4-Flash 写正文，长文推荐 deepseek-chat）。
 
 ## 工作流程
 
-1. 下载视频 + AI 字幕
-2. 每 10 秒全覆盖抽帧
-3. OCR + 感知哈希去重
-4. AI 并发视觉打分，人工选出最终 7-12 帧
-5. AI 并发提取最终帧中的文字/公式/表格/概念
-6. 融合字幕 + 图中内容生成 DOCX
-7. 验证 + 清理临时文件
+由 `run_pipeline.py` 串起六步（每步失败不影响后续，断点可续跑）：
+
+1. 下载视频 + 官方 AI 字幕（`scripts/extract_frames.py`）
+2. OCR 预筛 + 感知哈希去重（`scripts/smart_select.py`）
+3. 多模态视觉打分（`scripts/score_frames_concurrent.py --mode score`）
+4. 按分数 + 主题多样性**自动精选**（`auto_select.py`，无需人工挑选）
+5. 图内文字/公式/流程提取（`score_frames_concurrent.py --mode extract`）
+6. 融合字幕生成 **Markdown + PDF**（`md_note.py` / `md2pdf.py`）
+7. （可选）上传到 ima 知识库（`to_ima.py`）
 
 ## 安装
 
 ```bash
+git clone https://github.com/rowanlin-dev/video-notes-pipeline.git
+cd video-notes-pipeline
 pip install -r scripts/requirements.txt
 ```
 
-需要系统安装 ffmpeg。
+系统需安装 `ffmpeg`（抽帧依赖）：
 
-配置 API：
+- Windows：`choco install ffmpeg` 或从 https://ffmpeg.org 下载后把 `bin` 加入 PATH
+- macOS：`brew install ffmpeg`
+- Ubuntu/Debian：`sudo apt-get install ffmpeg`
+
+## 配置
 
 ```bash
-cp templates/env.example .env
-# 填写 VISION_API_KEY / VISION_BASE_URL / VISION_MODEL
+cp .env.example .env
 ```
 
-配置 B 站 Cookie：
+编辑 `.env` 至少填 `VISION_API_KEY`（识图用）。写正文用独立的 `TEXT_*`：
+
+```ini
+VISION_API_KEY=你的智谱API_Key
+VISION_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
+VISION_MODEL=glm-4v-flash
+
+TEXT_API_KEY=
+TEXT_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
+TEXT_MODEL=glm-4-flash
+```
+
+支持任意 OpenAI 兼容多模态 API（智谱、通义千问、硅基流动、本地 vLLM 等）。
+
+配置 B 站 Cookie（强烈建议，否则基本拿不到官方 AI 字幕）：
 
 ```bash
 cp bilibili_cookies.txt.example bilibili_cookies.txt
-# 填写 SESSDATA
+# 填入 SESSDATA
 ```
 
 ## 使用方法
 
-当用户提供 B 站视频链接并要求做笔记时，按以下步骤执行：
+当用户提供 B 站视频链接并要求做笔记时，直接用 `run_pipeline.py` 一键跑：
 
 ```bash
-# 1. 抽帧
-python scripts/extract_frames.py <BV号> \
-  --page <N> \
-  --mode cover \
-  --subtitle \
-  --workspace ./workspace \
-  --frames ./frames/pXX
+# 单 P / 默认当前 P
+python run_pipeline.py BV1xx411c7mD
 
-# 2. 去重
-python scripts/smart_select.py ./frames/pXX/fixed \
-  --output-dir ./frames/pXX/selected \
-  --skip-clustering
+# 课件/PPT 类（默认 scene 场景检测即可）
+python run_pipeline.py BV1xx411c7mD --mode fixed --interval 20
 
-# 3. 并发打分
-python scripts/score_frames_concurrent.py \
-  --frames ./frames/pXX/selected \
-  --output ./workspace/vision_scores_pXX.json \
-  --workers 16
+# 操作类视频（PS/剪辑/代码实操）：画面频繁小幅变化，
+# 阈值更低更敏感、合并窗口更短，避免相邻步骤被合并
+python run_pipeline.py BV1hD42137sx --threshold 0.02 --merge-gap 1.5
 
-# 4. 人工选最终帧，复制到 final/
-mkdir -p ./frames/pXX/final
-cp ./frames/pXX/selected/frame_XXXX.jpg ./frames/pXX/final/
+# 访谈/口播类：只下字幕不抽帧，生成纯文字笔记
+python run_pipeline.py BV1zNoVB1EWb --no-video
 
-# 5. 提取图中内容
-python scripts/score_frames_concurrent.py \\
-  --frames ./frames/pXX/final \\
-  --output ./workspace/vision_extract_pXX.json \\
-  --mode extract \\
-  --workers 16
+# 长视频：切块生成（默认每段约 25 分钟，最多 12 段）
+python run_pipeline.py BV1xx411c7mD --segment-minutes 25 --max-segments 12
 
-# 6. 生成 DOCX 前，先提取字幕关键因果句
-python scripts/extract_key_sentences.py \\
-  ./workspace/<BV>_p<N>_subtitles.txt
+# 社会/哲学类顺带抓评论区（学习类价值低，默认 off）
+python run_pipeline.py BV1xx411c7mD --comments top
 
-# 7. 生成 DOCX
-cp templates/docx_note_v2.py ./workspace/gen_pXX_v1.py
-# 编辑 TITLE/SOURCE/FRAMES/SECTIONS，参考 <BV>_p<N>_subtitles.key.json 覆盖因果句
-python ./workspace/gen_pXX_v1.py
+# 多 P：转全部 / 指定分P列表
+python run_pipeline.py BV1xx411c7mD --pages all
+python run_pipeline.py BV1xx411c7mD --pages 1,3,5
 
-# 8. 验证（含字幕关键句覆盖检查）
-python scripts/verify_docx.py ./workspace/<output>.docx --subtitle ./workspace/<BV>_p<N>_subtitles.txt
+# 断点续跑（从某步开始）
+python run_pipeline.py BV1xx411c7mD --from-step 3
 
-# 9. 清理
-rm -f ./workspace/<BV>_p<N>.mp4
-rm -f ./workspace/<BV>_p<N>_subtitles.json
-rm -f ./workspace/gen_pXX_v1.py
+# 生成后归档进 ima 知识库
+python run_pipeline.py BV1xx411c7mD --kb-id <知识库ID>
+python run_pipeline.py BV1xx411c7mD --route          # 按内容自动归档到主题文件夹
+```
 
+输出在 `runs/<BV>_p<N>/output/`：`*.md`（笔记）、`*.pdf`（供知识库入库）、`images/`（配图）。每分P 含 `result.json` 汇总。
 
 ## 笔记写作标准
 
@@ -104,22 +113,25 @@ rm -f ./workspace/gen_pXX_v1.py
 - 追求知识完整性，宁可多写不可遗漏
 - 保留所有重要细节、公式、定义、例题、做题技巧
 - 解释 WHY，不只是 WHAT
-- 不带时间戳
+- **每张配图带可点击时间戳**，与视频位置对齐
 - 截图只补充字幕没讲的考点，不抄非考点内容
+- 学科自适应：按标题/简介自动分类（tech / humanities / social_philosophy / general），套用对应模板与字数预算，不要硬编码学科
 
 ## 关键规则
 
-- **抽帧用 `--mode cover`**，不用 scene（讲课视频会漏内容）
-- **每个视频必须有独立的 `frames/pXX/` 目录**，禁止多视频共用
-- **最终帧放入独立的 `final/` 目录**
-- **不要用 Hermes 的 `vision_analyze` 串行调用**，所有视觉分析走 `score_frames_concurrent.py`
-- **帧目录必须是纯英文路径**
-- **不要用 `**xxx**` 或 `<font color=red>` 等 markdown 语法写 DOCX**，要用 `run.bold` 和 `run.font.color`
+- **抽帧默认 `--mode scene`**（场景切换检测，适合课件/PPT），不要用旧的 `--mode cover` 全覆盖；操作类改用 `--threshold 0.02 --merge-gap 1.5`
+- **选帧全自动**：`auto_select.py` 按分数 + 主题多样性精选到 `final/`，无需人工 `cp` 挑选帧
+- **所有视觉分析走 `score_frames_concurrent.py`**（score / extract 两种模式），不要串行逐帧调用
+- **模型分离**：识图用 `VISION_*`，写正文用 `TEXT_*`；长文 / 切块笔记 `TEXT_MODEL` 推荐 `deepseek-chat`（glm-4-flash 长文易截断）
+- **输出 Markdown + PDF**，用 Markdown 语法（非 DOCX，不要用 `run.bold`）
+- **字幕时间戳格式为 `MMmSSs`**（如 `186m00s`，分钟可超 60），不是 `MM:SS`
+- **每个视频/分P 有独立 `runs/<BV>_p<N>/` 目录**，禁止多视频共用
+- 帧目录、工作目录保持纯英文路径
 
 ## 依赖
 
 ```bash
-pip install yt-dlp imagehash rapidocr-onnxruntime python-docx Pillow requests python-dotenv
+pip install -r scripts/requirements.txt
 ```
 
-需要 ffmpeg。
+需要 `ffmpeg`（见上方安装）。
