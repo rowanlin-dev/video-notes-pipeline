@@ -4,7 +4,7 @@
 
 ## 提建议 / 报 Bug
 
-1. 在 [Issues](https://github.com/asdhabdua/bilibili-video-notes-skill/issues) 页面创建新 Issue
+1. 在 [Issues](https://github.com/rowanlin-dev/video-notes-pipeline/issues) 页面创建新 Issue
 2. 描述你的建议或遇到的问题
 3. 如果是 Bug，请附上错误信息和复现步骤
 
@@ -35,7 +35,7 @@
 - 更新 README 和相关 Agent 文件（SKILL.md / CLAUDE.md / AGENTS.md）保持一致
 
 ## 联系方式
-- **提建议/报Bug**：[GitHub Issues](https://github.com/asdhabdua/bilibili-video-notes-skill/issues/new)
+- **提建议/报Bug**：[GitHub Issues](https://github.com/rowanlin-dev/video-notes-pipeline/issues/new)
 - **联系邮箱**：EugenegengU@outlook.com
 
 欢迎提交 Issue 和 PR！

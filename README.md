@@ -34,10 +34,10 @@
 ## ⚡ 一键安装（复制粘贴给 AI）
 
 ```
-请帮我安装 bilibili-video-notes：
+请帮我安装 video-notes-pipeline：
 
-git clone https://github.com/asdhabdua/bilibili-video-notes-skill.git
-cd bilibili-video-notes-skill
+git clone https://github.com/rowanlin-dev/video-notes-pipeline.git
+cd video-notes-pipeline
 pip install -r scripts/requirements.txt
 
 安装完成后，把根目录的 .env.example 复制为 .env 并填入 API Key，
@@ -73,8 +73,8 @@ pip install -r scripts/requirements.txt
 ### 1. 克隆安装
 
 ```bash
-git clone https://github.com/asdhabdua/bilibili-video-notes-skill.git
-cd bilibili-video-notes-skill
+git clone https://github.com/rowanlin-dev/video-notes-pipeline.git
+cd video-notes-pipeline
 pip install -r scripts/requirements.txt
 ```
 
@@ -547,7 +547,7 @@ video-notes-pipeline/
 
 ## 📬 反馈
 
-- **提建议/报 Bug**：[GitHub Issues](https://github.com/asdhabdua/bilibili-video-notes-skill/issues/new)
-- **功能请求**：[GitHub Discussions](https://github.com/asdhabdua/bilibili-video-notes-skill/discussions)
+- **提建议/报 Bug**：[GitHub Issues](https://github.com/rowanlin-dev/video-notes-pipeline/issues/new)
+- **功能请求**：[GitHub Discussions](https://github.com/rowanlin-dev/video-notes-pipeline/discussions)
 
 欢迎提交 Issue 和 PR！如果觉得有用的话欢迎点一下星标哟🤗
