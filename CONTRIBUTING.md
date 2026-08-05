@@ -36,6 +36,6 @@
 
 ## 联系方式
 - **提建议/报Bug**：[GitHub Issues](https://github.com/rowanlin-dev/video-notes-pipeline/issues/new)
-- **联系邮箱**：EugenegengU@outlook.com
+- **联系邮箱**：pluto_wangyi@126.com
 
 欢迎提交 Issue 和 PR！
