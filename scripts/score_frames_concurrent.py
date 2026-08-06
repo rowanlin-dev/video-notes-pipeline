@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-并发视觉分析脚本 - bilibili-video-notes
+并发视觉分析脚本 - video-notes-pipeline
 
 用途：对 selected/ 目录下的所有帧一次性并发进行 vision 分析，
 输出结构化 JSON 供后续选帧和写笔记使用。
@@ -352,7 +352,7 @@ def process_one_frame(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="bilibili-video-notes: 并发视觉分析"
+        description="video-notes-pipeline: 并发视觉分析"
     )
     parser.add_argument("--frames", required=True, help="selected/ 帧目录路径")
     parser.add_argument("--output", required=True, help="输出 JSON 路径")

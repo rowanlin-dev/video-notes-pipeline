@@ -1,4 +1,4 @@
-# Bilibili Video Notes 📝
+# Video Notes Pipeline 📝
 
 > **B站视频 → 图文笔记 → 知识库 一键流水线**
 >
@@ -23,6 +23,7 @@
 - [完整工作流](#-%E5%AE%8C%E6%95%B4%E5%B7%A5%E4%BD%9C%E6%B5%81)
 - [🔧 技术实现](#-%E6%8A%80%E6%9C%AF%E5%AE%9E%E7%8E%B0)
 - [📚 入 ima 知识库（可选）](#-%E5%85%A5-ima-%E7%9F%A5%E8%AF%86%E5%BA%93%E5%8F%AF%E9%80%89)
+- [🛠️ 常见坑与对策（实战沉淀）](#常见坑与对策实战沉淀)
 - [常见问题](#-%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98)
 - [Agent 使用](#-agent-%E4%BD%BF%E7%94%A8)
 - [目录结构](#-%E7%9B%AE%E5%BD%95%E7%BB%93%E6%9E%84)
@@ -260,7 +261,7 @@ python run_pipeline.py BV1xx411c7mD --from-step 6
 3. **视觉打分**：`scripts/score_frames_concurrent.py --mode score`
 4. **自动精选**：`auto_select.py`（含类型黑名单 / 关键词 / OCR 二次校验 / 自进化黑名单）
 5. **提取图中内容**：`scripts/score_frames_concurrent.py --mode extract`
-6. **生成 MD + PDF**：`md_note.py` / `md2pdf.py`
+6. **生成 MD + PDF**：`md_note.py` / `md2pdf.py`（无浏览器时 PDF 用 `scripts/gen_full_note.py` 走 weasyprint + TTF 兜底，见下方「常见坑与对策 §3」）
 7. **上传 ima（可选）**：`to_ima.py`
 
 ### 产出在哪
@@ -396,6 +397,58 @@ python run_pipeline.py BV1xx411c7mD --no-ima
 
 ---
 
+## 🛠️ 常见坑与对策（实战沉淀）
+
+### 1. B站 412 风控：下载失败，但能查到标题
+
+`www.bilibili.com` 视频页直下可能被 IP 级 412 拦截，但 `api.bilibili.com`（元信息/字幕）通常正常，于是出现「能查到标题却下不了视频」。已验证的绕过链路：
+
+- 用 `bilibili_cookies.txt`（Netscape 格式）逐行解析成 `Cookie:` header
+- 调 playurl API 拿 dash 流：视频轨选 720p（id=64），音频轨选 bandwidth 最大
+- `curl --http1.1` 下载 m4s 分片，`ffmpeg -i video -i audio -c copy` 合并成 mp4
+- 合并出的 mp4 放在 `runs/<BV>_p<N>/` 下，pipeline 会跳过下载直接复用
+
+### 2. 官方 AI 字幕缺失或串台（内容与视频无关）
+
+`player/v2` 返回的字幕 `subtitle_url` 可能为空（需 wbi 签名），且 AI 字幕有串台前科（如行车导航语音）。对策：**先抽查字幕内容与标题主题是否一致**；不一致或缺失则删掉 `*_subtitles.{json,txt}`，用本机 ASR 兜底：
+
+```bash
+pip install faster-whisper
+ffmpeg -y -i <video>.mp4 -vn -ar 16000 -ac 1 /tmp/audio_16k.wav
+# 国内需镜像 + 禁用 xet 下载模型
+HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 \
+  huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
+# ASR：WhisperModel(..., device="cpu", compute_type="int8")，transcribe(language="zh")
+python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subtitles.json
+```
+
+- faster-whisper small CPU 约 3-5 分钟/8 分钟音频
+- 字幕 JSON 格式：`{"body": [{"from": 秒, "to": 秒, "content": "..."}]}`，TXT 每行 `[MMmSSs] 文本`
+- **ASR 错词用 deepseek-chat 术语级修正**：`python scripts/fix_subtitles.py <字幕JSON> --video-topic <主题> --extra-terms "poster man→Postman, moke→mock"`（术语表要显式写进 prompt，否则 LLM 保守不改）
+- 修正后 `--from-step 6` 重新生成笔记
+
+### 3. PDF 中文豆腐块（本机无 Chrome/Edge）
+
+`md2pdf.py` 默认依赖 Chrome/Edge 渲染。无浏览器时用 weasyprint + TTF 中文字体：
+
+- ⚠️ **必须用 TTF 版字体**（TrueType 轮廓）：OTF(CFF) 版会被 fontconfig 拒加载。可用 `https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf`（约 16MB 可变字体，URL 需编码 `%5B` `%5D`）
+- 生成：`python scripts/gen_full_note.py <笔记.md> [标题] [字体.ttf]`（内部：md_to_html → 注入 `@font-face` → weasyprint `FontConfiguration` 出 PDF）
+- 验证：`pymupdf` 读 PDF，检查 `get_fonts()` 含 Noto Sans SC 且 `get_text()` 中文正常
+
+### 4. 智谱 API 429 限流（并发打分/提取）
+
+`score_frames_concurrent.py` 并发高时易 429。对策：
+
+- 降低并发重跑：`--workers 2 --max-retries 5 --resume`
+- ⚠️ resume 按文件名跳过，**失败帧也带 error 会被跳过**——最稳妥是清空输出 JSON 后对整个目录重打分
+- ⚠️ **打分对象是 `selected/` 而非 `scene/`**：scene/ 帧名带时间戳（`frame_0001_00m00s.jpg`），selected/ 是纯编号（`frame_0001.jpg`），scores JSON 的 key 必须与 auto_select 输入的 selected/ 一致
+
+### 5. deepseek 批量修正字幕的行号陷阱
+
+分批让 LLM 修正字幕时，每批 LLM 会重新编号（续编行号），超出批内校验被丢弃、只回写第一批。对策：**不依赖 LLM 回传行号**，改为按输出顺序拼接 + 只提取 `[时间戳] 文本` 行；每轮从原始 JSON 重建输入保证幂等（见 `scripts/fix_subtitles.py`）。
+
+---
+
 ## ❓ 常见问题
 
 **Q：提示 412 / 请求被拦截**
@@ -433,7 +486,7 @@ B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未
 - 直接在本项目目录里和 Agent 对话，让它执行 `python run_pipeline.py <BV号>` 即可；Agent 会按
   `SKILL.md` 的流程跑完整条流水线。
 - 想一句话触发：把本项目封装为 WorkBuddy 用户级 skill（放到
-  `~/.workbuddy/skills/bili-video-notes/`），之后直接在对话框说「总结这个 B站视频」。
+  `~/.workbuddy/skills/video-notes-pipeline/`），之后直接在对话框说「总结这个 B站视频」。
 - ima 自动入库依赖 WorkBuddy 的 ima 连接器：需先在连接器管理里信任 / 连接 ima，
   再运行带 `--route` 的流水线（见上方「📚 入 ima 知识库」）。
 
@@ -474,6 +527,10 @@ video-notes-pipeline/
 │   ├── extract_frames.py          # 下载 + 抽帧（scene 检测/定时、长视频降级、--no-video）
 │   ├── smart_select.py            # OCR 预筛 + 感知哈希去重
 │   ├── score_frames_concurrent.py # 多模态视觉打分 + 图内文字提取
+│   ├── asr_subtitle.py            # 本地 faster-whisper ASR 兜底（字幕缺失/串台）
+│   ├── fix_subtitles.py           # deepseek 术语级修正 ASR 错词
+│   ├── apply_subtitles.py         # 字幕写回/校验
+│   ├── gen_full_note.py           # weasyprint + TTF 中文 PDF（无浏览器兜底）
 │   ├── note_subject.py            # 学科分类 + 字数预算（四学科模板）
 │   ├── fetch_comments.py          # B站评论抓取（WBI 免登录，off/list/top/summary）
 │   ├── extract_key_sentences.py
