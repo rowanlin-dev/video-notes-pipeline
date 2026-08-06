@@ -331,6 +331,10 @@ B站对访问 `www.bilibili.com` 视频页的出口 IP 有 WAF 风控：
 > 把笔记直接归档进**腾讯 ima 知识库**，省去手动下载再上传。
 > 这是**可选功能**，依赖本机已安装的 ima WorkBuddy skill，不影响核心笔记生成。
 
+> **💡 选用哪种 ima 接入方式？**
+> - **用 WorkBuddy**：直接用 WorkBuddy 自带的 **ima 连接器**最好 —— 连接器管理页一键「信任/连接」即可，功能最全、持续更新，无需手动装 skill。
+> - **非 WorkBuddy 环境**（Hermes、Claude Desktop、Cursor、Cline 等任意 MCP 客户端）：推荐安装腾讯官方 **ima-skill** → https://ima.qq.com/agent-interface ，按页面指引部署后，即可获得与 WorkBuddy 内置连接器一致的 ima 能力（知识库 + 笔记的读写搜）。
+
 ### 前置条件
 
 ima 自动入库依赖腾讯 ima 的 WorkBuddy skill：`~/.workbuddy/skills/ima-skills`
