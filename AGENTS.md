@@ -1,115 +1,46 @@
 # Bilibili Video Notes
 
-从 B 站教育/讲课视频生成带截图的 DOCX 学习笔记。
+从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
+
+完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
 ## 工作流程
 
-1. 下载视频 + AI 字幕
-2. 每 10 秒全覆盖抽帧
-3. OCR + 感知哈希去重
-4. AI 并发视觉打分，人工选出最终 7-12 帧
-5. AI 并发提取最终帧中的文字/公式/表格/概念
-6. 融合字幕 + 图中内容生成 DOCX
-7. 验证 + 清理临时文件
+由 `run_pipeline.py` 串起七步（失败可用 `--from-step` 断点续跑）：
 
-## 安装
-
-```bash
-pip install -r scripts/requirements.txt
-```
-
-需要系统安装 ffmpeg。
-
-配置 API：
-
-```bash
-cp templates/env.example .env
-# 填写 VISION_API_KEY / VISION_BASE_URL / VISION_MODEL
-```
-
-配置 B 站 Cookie：
-
-```bash
-cp bilibili_cookies.txt.example bilibili_cookies.txt
-# 填写 SESSDATA
-```
+1. 下载视频 + 官方 AI 字幕（`scripts/extract_frames.py`）
+2. OCR 预筛 + 感知哈希去重（`scripts/smart_select.py`）
+3. 多模态视觉打分（`scripts/score_frames_concurrent.py --mode score`）
+4. 按分数 + 主题多样性自动精选（`auto_select.py`）
+5. 图内文字/公式/流程提取（`score_frames_concurrent.py --mode extract`）
+6. 融合字幕生成 Markdown + PDF（`md_note.py` / `md2pdf.py`）
+7. （可选）上传 ima 知识库（`to_ima.py`）
 
 ## 使用方法
 
-当用户提供 B 站视频链接并要求做笔记时，按以下步骤执行：
-
 ```bash
-# 1. 抽帧
-python scripts/extract_frames.py <BV号> \
-  --page <N> \
-  --mode cover \
-  --subtitle \
-  --workspace ./workspace \
-  --frames ./frames/pXX
+# 一键跑（默认当前 P）
+python run_pipeline.py BV1xx411c7mD
 
-# 2. 去重
-python scripts/smart_select.py ./frames/pXX/fixed \
-  --output-dir ./frames/pXX/selected \
-  --skip-clustering
+# 操作类视频（代码实操/剪辑）：低阈值
+python run_pipeline.py BV1hD42137sx --threshold 0.02 --merge-gap 1.5
 
-# 3. 并发打分
-python scripts/score_frames_concurrent.py \
-  --frames ./frames/pXX/selected \
-  --output ./workspace/vision_scores_pXX.json \
-  --workers 16
-
-# 4. 人工选最终帧，复制到 final/
-mkdir -p ./frames/pXX/final
-cp ./frames/pXX/selected/frame_XXXX.jpg ./frames/pXX/final/
-
-# 5. 提取图中内容
-python scripts/score_frames_concurrent.py \\
-  --frames ./frames/pXX/final \\
-  --output ./workspace/vision_extract_pXX.json \\
-  --mode extract \\
-  --workers 16
-
-# 6. 生成 DOCX 前，提取字幕关键因果句
-python scripts/extract_key_sentences.py \\
-  ./workspace/<BV>_p<N>_subtitles.txt
-
-# 7. 生成 DOCX
-cp templates/docx_note_v2.py ./workspace/gen_pXX_v1.py
-# 编辑 TITLE/SOURCE/FRAMES/SECTIONS，参考 <BV>_p<N>_subtitles.key.json 覆盖因果句
-python ./workspace/gen_pXX_v1.py
-
-# 8. 验证（含字幕关键因果句覆盖检查）
-python scripts/verify_docx.py ./workspace/<output>.docx --subtitle ./workspace/<BV>_p<N>_subtitles.txt
-
-# 9. 清理
-rm -f ./workspace/<BV>_p<N>.mp4
-rm -f ./workspace/<BV>_p<N>_subtitles.json
-rm -f ./workspace/gen_pXX_v1.py
-
-
-## 关键规则
-
-- **抽帧用 `--mode cover`**，不用 scene（讲课视频会漏内容）
-- **每个视频必须有独立的 `frames/pXX/` 目录**，禁止多视频共用
-- **最终帧放入独立的 `final/` 目录**
-- **不要用任何平台的 `vision_analyze` 串行调用**，所有视觉分析都走 `score_frames_concurrent.py`
-- **帧目录必须是纯英文路径**
-- **笔记不是照搬字幕**，是融合字幕 + 截图的知识文档
-
-## 笔记写作标准
-
-- 以顶级学者身份，融会贯通字幕和截图
-- 追求知识完整性，宁可多写不可遗漏
-- 保留所有重要细节、公式、定义、例题、做题技巧
-- 解释 WHY，不只是 WHAT
-- 不带时间戳
-- 截图只补充字幕没讲的考点，不抄非考点内容
-- **视频提到 GitHub / 博客 / 官网等外部资料源时，默认主动抓取并补充到笔记**：GitHub 用 REST API 抓 README + 元数据；博客 / 官网用搜索核实真实地址后摘录要点并注明链接。抓取前提示用户开代理，连不上则只补链接、不阻塞整条流程。
-
-## 依赖
-
-```bash
-pip install yt-dlp imagehash rapidocr-onnxruntime python-docx Pillow requests python-dotenv
+# 断点续跑
+python run_pipeline.py BV1xx411c7mD --from-step 4
 ```
 
-需要 ffmpeg。
+输出在 `runs/<BV>_p<N>/output/`。更多参数见 SKILL.md。
+
+## 环境注意
+
+- `pip install -r scripts/requirements.txt`（含 faster-whisper / weasyprint 兜底依赖）
+- 需要系统 `ffmpeg`
+- `.env`（API key）与 `bilibili_cookies.txt`（SESSDATA）不进仓库，复制 `.env.example` / `bilibili_cookies.txt.example` 填写
+- `models/`、`fonts/`、`runs/` 为本地产物，已 gitignore
+
+## 常见坑
+
+- B站 412 风控：playurl API + `curl --http1.1` 绕过（见 SKILL.md）
+- 官方 AI 字幕串台/缺失：本地 faster-whisper ASR 兜底（`scripts/asr_subtitle.py`）
+- PDF 中文豆腐块：weasyprint + TTF 字体（`scripts/gen_full_note.py`）
+- 智谱 429：`--workers 2 --resume` 低并发重打

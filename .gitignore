@@ -21,6 +21,9 @@ ENV/
 
 # 运行产物（视频、帧、笔记、PDF）
 runs/
+# 本地大文件（ASR 模型、中文字体），不进仓库
+models/
+fonts/
 # 本地冒烟测试产物（demo/render/mock）
 _smoketest/
 *.mp4
