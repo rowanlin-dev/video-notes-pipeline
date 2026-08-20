@@ -41,6 +41,6 @@ python run_pipeline.py BV1xx411c7mD --from-step 4
 ## 常见坑
 
 - B站 412 风控：playurl API + `curl --http1.1` 绕过（见 SKILL.md）
-- 官方 AI 字幕串台/缺失：本地 faster-whisper ASR 兜底（`scripts/asr_subtitle.py`）
+- 官方 AI 字幕串台/缺失：本地语音转文字（ASR，自动语音识别）兜底——`scripts/asr_subtitle.py` 用 faster-whisper 把音轨转成字幕
 - PDF 中文豆腐块：weasyprint + TTF 字体（`scripts/gen_full_note.py`）
 - 智谱 429：`--workers 2 --resume` 低并发重打

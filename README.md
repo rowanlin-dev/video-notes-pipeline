@@ -56,7 +56,7 @@ pip install -r scripts/requirements.txt
 - 🧹 **垃圾帧过滤**：自动剔除「求三连 / 片头广告 / 求赞」等无信息量帧（见下方重点配置）
 - 🔗 **自动补充外部资料**：视频提到 GitHub / 博客 / 官网等来源时，自动抓取并补充权威说明到笔记（抓取前提示开代理，连不上则只补链接）
 - 📝 **融合字幕 + 截图内容**生成 Markdown + PDF 笔记，每张图带可点击时间戳
-- 🎙️ **无字幕 ASR 兜底**：官方 AI 字幕缺失或串台（与视频内容无关）时，用本地 faster-whisper 把音轨转写成字幕，不依赖 B站（见「常见坑与对策 §2」）
+- 🎙️ **无字幕时语音转文字(ASR)兜底**：官方 AI 字幕缺失或串台（与视频内容无关）时，用本地 faster-whisper 把音轨转写成字幕，不依赖 B站（见「常见坑与对策 §2」）
 - 📚 **可选一键入库 ima** 知识库，按内容自动归档到主题文件夹
 - 🤖 **多 Agent 支持**：WorkBuddy（本仓库作者在用的环境）/ Hermes / Claude Code / Codex CLI
 
@@ -411,7 +411,7 @@ python run_pipeline.py BV1xx411c7mD --no-ima
 
 ### 2. 官方 AI 字幕缺失或串台（内容与视频无关）
 
-`player/v2` 返回的字幕 `subtitle_url` 可能为空（需 wbi 签名），且 AI 字幕有串台前科（如行车导航语音）。对策：**先抽查字幕内容与标题主题是否一致**；不一致或缺失则删掉 `*_subtitles.{json,txt}`，用本机 ASR 兜底：
+`player/v2` 返回的字幕 `subtitle_url` 可能为空（需 wbi 签名），且 AI 字幕有串台前科（如行车导航语音）。对策：**先抽查字幕内容与标题主题是否一致**；不一致或缺失则删掉 `*_subtitles.{json,txt}`，用本机语音转文字（ASR，Automatic Speech Recognition，自动语音识别——把视频里说的话转成文字字幕）兜底：
 
 ```bash
 pip install faster-whisper
@@ -419,13 +419,13 @@ ffmpeg -y -i <video>.mp4 -vn -ar 16000 -ac 1 /tmp/audio_16k.wav
 # 国内需镜像 + 禁用 xet 下载模型
 HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 \
   huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
-# ASR：WhisperModel(..., device="cpu", compute_type="int8")，transcribe(language="zh")
+# 语音转文字(ASR)：WhisperModel(..., device="cpu", compute_type="int8")，transcribe(language="zh")
 python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subtitles.json
 ```
 
 - faster-whisper small CPU 约 3-5 分钟/8 分钟音频
 - 字幕 JSON 格式：`{"body": [{"from": 秒, "to": 秒, "content": "..."}]}`，TXT 每行 `[MMmSSs] 文本`
-- **ASR 错词用 deepseek-chat 术语级修正**：`python scripts/fix_subtitles.py <字幕JSON> --video-topic <主题> --extra-terms "poster man→Postman, moke→mock"`（术语表要显式写进 prompt，否则 LLM 保守不改）
+- **语音转文字(ASR)错词用 deepseek-chat 术语级修正**：`python scripts/fix_subtitles.py <字幕JSON> --video-topic <主题> --extra-terms "poster man→Postman, moke→mock"`（术语表要显式写进 prompt，否则 LLM 保守不改）
 - 修正后 `--from-step 6` 重新生成笔记
 
 ### 3. PDF 中文豆腐块（本机无 Chrome/Edge）
@@ -459,7 +459,7 @@ B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未
 
 **Q：没有字幕 / 字幕串台（转写内容与视频无关）**
 
-不是所有视频都有官方 AI 字幕，且 B站 AI 字幕偶发串台。两种情况都直接用**本地 ASR 兜底**：
+不是所有视频都有官方 AI 字幕，且 B站 AI 字幕偶发串台。两种情况都直接用**本地语音转文字(ASR)兜底**：
 `scripts/asr_subtitle.py` 用 faster-whisper 把音轨转成字幕，`scripts/fix_subtitles.py` 可选做 LLM 术语修正，
 再 `--from-step 6` 重生成笔记，详见上方「常见坑与对策 §2」。配好 `SESSDATA` 能提高拿到官方字幕的概率，但不再依赖它。
 
@@ -530,8 +530,8 @@ video-notes-pipeline/
 │   ├── extract_frames.py          # 下载 + 抽帧（scene 检测/定时、长视频降级、--no-video）
 │   ├── smart_select.py            # OCR 预筛 + 感知哈希去重
 │   ├── score_frames_concurrent.py # 多模态视觉打分 + 图内文字提取
-│   ├── asr_subtitle.py            # 本地 faster-whisper ASR 兜底（字幕缺失/串台）
-│   ├── fix_subtitles.py           # deepseek 术语级修正 ASR 错词
+│   ├── asr_subtitle.py            # 语音转文字(ASR)：本地 faster-whisper 转字幕（缺失/串台时）
+│   ├── fix_subtitles.py           # 语音转文字(ASR)错词的 LLM 术语级修正
 │   ├── apply_subtitles.py         # 字幕写回/校验
 │   ├── gen_full_note.py           # weasyprint + TTF 中文 PDF（无浏览器兜底）
 │   ├── note_subject.py            # 学科分类 + 字数预算（四学科模板）

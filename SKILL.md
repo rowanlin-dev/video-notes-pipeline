@@ -141,7 +141,7 @@ python run_pipeline.py BV1xx411c7mD --route          # 按内容自动归档到�
 
 ### 2. 官方 AI 字幕缺失或串台（内容与视频无关）
 
-`player/v2` 返回的字幕 `subtitle_url` 可能为空（需 wbi 签名），且 AI 字幕有串台前科（如行车导航语音）。对策：**先抽查字幕内容与标题主题是否一致**；不一致或缺失则删掉 `*_subtitles.{json,txt}`，用本机 ASR 兜底：
+`player/v2` 返回的字幕 `subtitle_url` 可能为空（需 wbi 签名），且 AI 字幕有串台前科（如行车导航语音）。对策：**先抽查字幕内容与标题主题是否一致**；不一致或缺失则删掉 `*_subtitles.{json,txt}`，用本机语音转文字（ASR，Automatic Speech Recognition，自动语音识别——把视频里说的话转成文字字幕）兜底：
 
 ```bash
 # 安装 + 取音频轨（16kHz 单声道）
@@ -150,13 +150,13 @@ ffmpeg -y -i <video>.mp4 -vn -ar 16000 -ac 1 /tmp/audio_16k.wav
 # 下载模型（国内需镜像 + 禁用 xet）
 HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 \
   huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
-# ASR：WhisperModel(..., device="cpu", compute_type="int8")，transcribe(language="zh")
+# 语音转文字(ASR)：WhisperModel(..., device="cpu", compute_type="int8")，transcribe(language="zh")
 python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subtitles.json
 ```
 
-- faster-whisper small CPU 约 3-5 分钟/8 分钟音频
+- faster-whisper small CPU 约 3-5 分钟/8 分钟音频（无 GPU 也能跑）
 - 字幕 JSON 格式：`{"body": [{"from": 秒, "to": 秒, "content": "..."}]}`，TXT 每行 `[MMmSSs] 文本`
-- **ASR 错词用 deepseek-chat 术语级修正**：`python scripts/fix_subtitles.py <字幕JSON> --video-topic <主题> --extra-terms "poster man→Postman, moke→mock"`（术语表要显式写进 prompt，否则 LLM 保守不改）
+- **语音转文字(ASR)错词用 deepseek-chat 术语级修正**：`python scripts/fix_subtitles.py <字幕JSON> --video-topic <主题> --extra-terms "poster man→Postman, moke→mock"`（术语表要显式写进 prompt，否则 LLM 保守不改）
 - 修正后 `--from-step 6` 重新生成笔记
 
 ### 3. PDF 中文豆腐块（本机无 Chrome/Edge）
