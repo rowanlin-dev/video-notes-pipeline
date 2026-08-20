@@ -56,6 +56,7 @@ pip install -r scripts/requirements.txt
 - 🧹 **垃圾帧过滤**：自动剔除「求三连 / 片头广告 / 求赞」等无信息量帧（见下方重点配置）
 - 🔗 **自动补充外部资料**：视频提到 GitHub / 博客 / 官网等来源时，自动抓取并补充权威说明到笔记（抓取前提示开代理，连不上则只补链接）
 - 📝 **融合字幕 + 截图内容**生成 Markdown + PDF 笔记，每张图带可点击时间戳
+- 🎙️ **无字幕 ASR 兜底**：官方 AI 字幕缺失或串台（与视频内容无关）时，用本地 faster-whisper 把音轨转写成字幕，不依赖 B站（见「常见坑与对策 §2」）
 - 📚 **可选一键入库 ima** 知识库，按内容自动归档到主题文件夹
 - 🤖 **多 Agent 支持**：WorkBuddy（本仓库作者在用的环境）/ Hermes / Claude Code / Codex CLI
 
@@ -456,9 +457,11 @@ python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subti
 B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未登录最易被拦；② 关掉 VPN/代理；
 ③ 等几分钟，或把 `WORKERS` 降到 4。「能查到标题却下不了视频」是 412 典型表现，不是脚本坏了。
 
-**Q：没有字幕**
+**Q：没有字幕 / 字幕串台（转写内容与视频无关）**
 
-不是所有视频都有官方 AI 字幕。没有时笔记仅根据截图生成，质量会下降；配好 `SESSDATA` 后重试。
+不是所有视频都有官方 AI 字幕，且 B站 AI 字幕偶发串台。两种情况都直接用**本地 ASR 兜底**：
+`scripts/asr_subtitle.py` 用 faster-whisper 把音轨转成字幕，`scripts/fix_subtitles.py` 可选做 LLM 术语修正，
+再 `--from-step 6` 重生成笔记，详见上方「常见坑与对策 §2」。配好 `SESSDATA` 能提高拿到官方字幕的概率，但不再依赖它。
 
 **Q：笔记里混进了求点赞/三连的片头帧**
 
@@ -593,6 +596,8 @@ video-notes-pipeline/
 | [requests](https://github.com/psf/requests) | Apache-2.0 |
 | [python-markdown](https://github.com/Python-Markdown/markdown) | BSD |
 | [python-dotenv](https://github.com/theskumar/python-dotenv) | BSD |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT |
+| [weasyprint](https://github.com/Kozea/WeasyPrint) | BSD-3-Clause |
 
 本仓库仅通过 pip/独立二进制形式调用上述依赖，未嵌入或修改其源码。各依赖仍保留原有许可证，相关许可证文本见对应官方仓库。
 

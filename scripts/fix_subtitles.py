@@ -10,7 +10,7 @@ POST chat/completions。修正结果写回原 JSON（覆盖 body.content）+ 同
 经验:
 - 术语表要显式写进 prompt，否则 LLM 保守不改（如 poster man→Postman、moke→mock）
 - 不要依赖 LLM 回传行号（每批重新编号会超出批内行数校验被丢弃），
-  改为「按输出顺序拼接 + 只提取 [时间戳] 文本 行」，见 fix_subtitles_bv1wr.py 的精简版
+  改为「按输出顺序拼接 + 只提取 [时间戳] 文本 行」
 """
 import json, os, sys, urllib.request
 
