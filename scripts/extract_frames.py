@@ -71,6 +71,12 @@ COOKIE_FILE = os.path.join(WORKSPACE, "bilibili_cookies.txt")
 FRAMES_DIR = os.environ.get("BILI_NOTES_FRAMES",
     os.environ.get("BILI_NOTES_WORKSPACE", _default_frames))
 
+# ---- 音频转文本（ASR）兜底所需的本地路径 ----
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(_SCRIPT_DIR)
+ASR_SCRIPT = os.path.join(_SCRIPT_DIR, "asr_subtitle.py")
+ASR_MODEL_DIR = os.path.join(ROOT_DIR, "models", "faster-whisper-small")
+
 
 def time_to_seconds(t: str) -> int:
     """Convert MM:SS or HH:MM:SS to seconds."""
@@ -177,6 +183,55 @@ def get_cookie_value(cookie_file: str, name: str) -> str:
     return ""
 
 
+def _asr_fallback(bvid: str, page: int, workspace: str) -> str:
+    """无字幕轨（官方AI/内嵌/外挂均不可用）时的兜底：直接对视频音频跑本地
+    faster-whisper，产出与官方字幕同构的 JSON + TXT。返回 TXT 路径，失败返回空串。
+
+    这是「检测不到任何字幕 → 果断进入音频转文本」的自动化落点，避免流水线卡死
+    或退化成粗糙的场景检测。
+    """
+    import subprocess as _sp
+    safe = re.sub(r'[<>:"/\\|?*]', '_', f"{bvid}_p{page}")
+    # 1) 找流水线已下载到工作目录的视频
+    video = None
+    for cand in (f"{safe}.mp4", f"{safe}.webm", f"{safe}.mkv", "video.mp4"):
+        p = os.path.join(workspace, cand)
+        if os.path.exists(p):
+            video = p
+            break
+    if not video:
+        print("[asr] 工作目录未找到视频文件，跳过 ASR")
+        return ""
+    out_json = os.path.join(workspace, f"{safe}_subtitles.json")
+    if os.path.exists(out_json):
+        print("[asr] 复用已存在的 ASR 字幕")
+    else:
+        if not (os.path.exists(ASR_SCRIPT) and os.path.exists(ASR_MODEL_DIR)):
+            print("[asr] 缺少 asr_subtitle.py 或本地模型，跳过 ASR")
+            return ""
+        out_txt = out_json.replace(".json", ".txt")
+        print(f"[asr] 未检测到任何字幕轨，果断进入音频转文本（本地 faster-whisper）...")
+        env = os.environ.copy()
+        env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+        try:
+            _sp.run([sys.executable, ASR_SCRIPT, video, out_json, out_txt, ASR_MODEL_DIR],
+                    check=True, env=env)
+        except Exception as e:
+            print(f"[asr] ASR 失败，跳过字幕：{e}")
+            return ""
+    # 保证 TXT 与官方字幕同构（[MMmSSs] 格式，md_note 可解析）
+    txt = out_json.replace(".json", ".txt")
+    if not os.path.exists(txt) and os.path.exists(out_json):
+        try:
+            data = json.load(open(out_json, "r", encoding="utf-8"))
+            with open(txt, "w", encoding="utf-8") as f:
+                for it in data.get("body", []):
+                    f.write(f"[{seconds_to_time(it['from'])}] {it.get('content', '')}\n")
+        except Exception:
+            pass
+    return txt if os.path.exists(txt) else ""
+
+
 def download_subtitles(bvid: str, page: int, start: float = None, end: float = None) -> str:
     """Download AI subtitles from Bilibili. Returns path to saved subtitle file."""
     import urllib.request
@@ -215,8 +270,8 @@ def download_subtitles(bvid: str, page: int, start: float = None, end: float = N
 
         subtitles = player_data.get("data", {}).get("subtitle", {}).get("subtitles", [])
         if not subtitles:
-            print("[warn] No subtitles available (may need login)")
-            return ""
+            print("[warn] 未检测到官方AI/内嵌/外挂字幕（may need login 或无字幕轨）")
+            return _asr_fallback(bvid, page, WORKSPACE)
 
         sub_url = subtitles[0]["subtitle_url"]
         if sub_url.startswith("//"):
@@ -516,6 +571,175 @@ def extract_scene_frames(video_path: str, threshold: float = 0.04, merge_gap: fl
     return frames
 
 
+# ============================================================
+# 字幕感知的 PPT 抽帧（slidegap）
+# 适用：一页一页的 PPT 视频，字幕是「烧录」在画面上的，
+#       直接抽帧会把字幕盖在 PPT 内容上方。
+# 思路：
+#   1. 裁掉画面底部「字幕条」所在区域后再做场景检测 —— 只捕捉 PPT 内容本身的变化，
+#      不受字幕出现/消失的干扰（字幕变化往往也会触发普通场景检测，造成误判/重复帧）。
+#   2. 解析官方字幕的 from/to，求「字幕之外的干净区间」(subtitle-off)。
+#   3. 每个 PPT 片段在其「最晚的干净区间」内取一帧 → 截图那一刻字幕不在屏幕上，
+#      不会遮挡 PPT。这正是「两句字幕之间的空挡截图」的算法化实现。
+# ============================================================
+def get_video_resolution(video_path: str):
+    """返回 (width, height)；失败返回 (0, 0)。"""
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, check=True)
+        parts = probe.stdout.strip().split(",")
+        if len(parts) == 2:
+            return int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+    return 0, 0
+
+
+def _parse_subtitle_timing(sub_json_path: str):
+    """从官方字幕 JSON 解析排序后的 [(from, to, text), ...]。"""
+    subs = []
+    try:
+        data = json.load(open(sub_json_path, "r", encoding="utf-8"))
+    except Exception:
+        return subs
+    for it in data.get("body", []):
+        try:
+            f = float(it["from"])
+            t = float(it.get("to", it["from"]))
+            subs.append((f, t, it.get("content", "")))
+        except Exception:
+            continue
+    subs.sort()
+    return subs
+
+
+def _subtitle_gaps(subs, duration, pad: float = 0.4, min_gap: float = 0.25):
+    """
+    求字幕之外的「干净区间」(subtitle-off)。
+    busy = [from-pad, to+pad] 合并重叠后取补集；只保留时长 >= min_gap 的区间。
+    pad 用于吸收「烧录字幕」与字幕轨时间点的轻微错位。
+    """
+    if not subs:
+        return [(0.0, duration)] if duration > 0 else []
+    busy = [(max(0.0, s - pad), e + pad) for s, e, _ in subs]
+    busy.sort()
+    merged = [list(busy[0])]
+    for s, e in busy[1:]:
+        if s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    gaps = []
+    cur = 0.0
+    for s, e in merged:
+        if s > cur + 1e-3:
+            gaps.append((cur, s))
+        cur = max(cur, e)
+    if duration and cur < duration - 1e-3:
+        gaps.append((cur, duration))
+    return [g for g in gaps if g[1] - g[0] >= min_gap]
+
+
+def extract_slidegap_frames(video_path: str, sub_json_path: str = None,
+                             threshold: float = 0.1, merge_gap: float = 1.5,
+                             min_gap: float = 0.3, pad: float = 0.1,
+                             ad_segments: list = None,
+                             max_frames: int = 40) -> list:
+    """字幕感知的 PPT 抽帧（截图落在「字幕空挡」，全帧不裁切、绝不丢内容）。
+
+    ★★★ 硬性约束（用户规则，禁止自优化时绕过）★★★
+        永远不要通过「裁剪(crop)画面」来去掉字幕。原因：
+          (1) 字幕位置不固定，代码无法确定裁哪里；
+          (2) PPT/背景是全屏，裁掉底部可能把内容一起裁掉。
+        正确做法只有两种：
+          A) 字幕之间有空挡 → 截图时刻落在空挡内（字幕不在屏幕上，自然不遮挡）；
+          B) 字幕全程常驻、无空挡（如连续旁白烧录视频）→ 接受字幕遮挡，
+             直接在 PPT 页代表时刻截图（完整画面，不裁切）。
+
+    流程：
+      1. 全帧场景检测找 PPT 翻页时刻（不裁切任何区域）；
+      2. 解析字幕 from/to 求「字幕空挡」（不裁切，仅用于选截图时刻）；
+      3. 每页优先取「落在页时间跨度内、且结束最晚的空挡中点」截图（无字幕）；
+         若页内无空挡，则取页中点（可能带字幕，按规则 B 接受，不裁切）。
+    """
+    out_dir = os.path.join(FRAMES_DIR, "scene")
+    os.makedirs(out_dir, exist_ok=True)
+    safe_move(os.path.join(out_dir, "*.jpg"))
+
+    try:
+        dur_probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", video_path],
+            capture_output=True, text=True)
+        duration = float(dur_probe.stdout.strip() or 0)
+    except Exception:
+        duration = 0.0
+
+    # 全帧场景检测（不裁切任何区域，PPT 翻页是大变化，字幕微变不会主导）
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vf", f"select='gt(scene,{threshold})',showinfo",
+        "-vsync", "vfr", "-q:v", "2",
+        os.path.join(out_dir, "raw_%04d.jpg"),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    ts = [float(m) for m in re.findall(r"pts_time:(\d+\.?\d*)", result.stderr)]
+    print(f"[slidegap] 全帧场景检测 {len(ts)} 个变化（PPT 翻页）")
+    if not ts:
+        print("[slidegap] 无场景变化，回退普通场景检测")
+        return extract_scene_frames(video_path, threshold, merge_gap, ad_segments=ad_segments)
+
+    # 聚类相邻突变 → PPT 片段；同页内的高亮/动画(<merge_gap)合并成一簇
+    clusters = []
+    cur = [ts[0]]
+    for t in ts[1:]:
+        if t - cur[-1] <= merge_gap:
+            cur.append(t)
+        else:
+            clusters.append(cur)
+            cur = [t]
+    clusters.append(cur)
+
+    # 字幕空挡（仅用于选截图时刻，不裁切画面）
+    subs = _parse_subtitle_timing(sub_json_path) if sub_json_path else []
+    gaps = _subtitle_gaps(subs, duration, pad=pad, min_gap=min_gap) if subs else []
+    print(f"[slidegap] 字幕空挡数={len(gaps)}（无空挡则接受字幕遮挡，不裁切）")
+
+    chosen = []
+    for cluster in clusters:
+        lo, hi = cluster[0], cluster[-1]
+        t = (lo + hi) / 2.0
+        if gaps:
+            # 页时间跨度内、结束最晚的空挡 → 内容最完整且无字幕
+            seg_gaps = [g for g in gaps if g[1] >= lo and g[0] <= hi]
+            if seg_gaps:
+                g = max(seg_gaps, key=lambda x: x[1])
+                t = (g[0] + g[1]) / 2.0
+        if ad_segments and in_ad_segments(t, ad_segments):
+            continue
+        chosen.append(t)
+
+    chosen = sorted(set(round(x, 3) for x in chosen))
+    if len(chosen) > max_frames:                  # 均匀抽样限幅
+        step = len(chosen) / max_frames
+        chosen = [chosen[int(i * step)] for i in range(max_frames)]
+    print(f"[slidegap] 选中 {len(chosen)} 个截图时刻（全帧不裁切，优先空挡）")
+
+    safe_move(os.path.join(out_dir, "raw_*.jpg"))
+    for i, ts_sec in enumerate(chosen):
+        out_file = os.path.join(out_dir, f"frame_{i+1:04d}_{seconds_to_time(ts_sec)}.jpg")
+        # 全帧截图，绝不裁切（规则 B：无空挡时字幕可能入镜，接受遮挡）
+        cmd = ["ffmpeg", "-y", "-ss", str(ts_sec), "-i", video_path,
+               "-frames:v", "1", "-q:v", "2", out_file]
+        subprocess.run(cmd, capture_output=True, check=True)
+
+    frames = sorted(glob.glob(os.path.join(out_dir, "frame_*.jpg")))
+    print(f"[slidegap] {len(frames)} 关键帧 -> {out_dir}")
+    return frames
+
+
 def main():
     global WORKSPACE, COOKIE_FILE, FRAMES_DIR
 
@@ -524,14 +748,16 @@ def main():
     parser.add_argument("--page", type=int, default=1, help="分P号 (默认 1)")
     parser.add_argument("--start", help="起始时间 MM:SS 或 HH:MM:SS")
     parser.add_argument("--end", help="结束时间 MM:SS 或 HH:MM:SS")
-    parser.add_argument("--mode", choices=["scene", "fixed", "cover", "both"], default="scene",
-                        help="抽帧模式: scene=场景检测, fixed=固定间隔, cover=全覆盖(每10秒,用于后续打分筛选)")
+    parser.add_argument("--mode", choices=["scene", "fixed", "cover", "both", "slidegap"], default="scene",
+                        help="抽帧模式: scene=场景检测, fixed=固定间隔, cover=全覆盖(每10秒), slidegap=字幕感知PPT抽帧(截图落在字幕空挡,不遮挡PPT)")
     parser.add_argument("--interval", type=int, default=30,
                         help="固定间隔秒数 (默认 30, cover模式默认10)")
     parser.add_argument("--threshold", type=float, default=0.04,
                         help="场景检测阈值 (默认 0.04)")
     parser.add_argument("--merge-gap", type=float, default=5.0,
                         help="场景聚合间隔秒数 (默认 5)")
+    parser.add_argument("--slide-min-gap", type=float, default=0.3,
+                        help="slidegap 模式：仅在时长 >= 该秒数的字幕空挡里截图 (默认 0.25)")
     parser.add_argument("--ad-keywords", default=os.getenv("AD_KEYWORDS", ""),
                         help="广告/卖课关键词，逗号分隔（默认读取 .env 的 AD_KEYWORDS）")
     parser.add_argument("--ad-context", type=float, default=float(os.getenv("AD_CONTEXT_SECONDS", "20")),
@@ -595,6 +821,16 @@ def main():
             # Cover mode: fixed interval, default 10s for full coverage
             cover_interval = args.interval if args.interval != 30 else 10
             extract_fixed_frames(video_path, cover_interval)
+        elif args.mode == "slidegap":
+            # 字幕感知 PPT 抽帧：截图落在两句字幕的空挡，避免字幕遮挡 PPT
+            _safe = re.sub(r'[<>:"/\\|?*]', '_', f"{args.bvid}_p{args.page}")
+            _sub_json = os.path.join(WORKSPACE, f"{_safe}_subtitles.json")
+            extract_slidegap_frames(
+                video_path, sub_json_path=_sub_json,
+                threshold=args.threshold, merge_gap=args.merge_gap,
+                min_gap=args.slide_min_gap,
+                ad_segments=ad_segments,
+            )
         elif args.mode in ("fixed", "both"):
             extract_fixed_frames(video_path, args.interval)
 

@@ -14,6 +14,13 @@ import json, os, sys, time
 
 from faster_whisper import WhisperModel
 
+
+def _mmss(s: float) -> str:
+    """秒 -> MMmSSs（与 extract_frames 字幕 TXT 同构，md_note 可解析）。"""
+    s = int(round(s))
+    m, sec = divmod(s, 60)
+    return f"{m:02d}m{sec:02d}s"
+
 AUDIO = sys.argv[1] if len(sys.argv) > 1 else "/tmp/audio_16k.wav"
 OUT_JSON = sys.argv[2] if len(sys.argv) > 2 else "subtitles.json"
 OUT_TXT = sys.argv[3] if len(sys.argv) > 3 else "subtitles.txt"
@@ -40,7 +47,7 @@ with open(OUT_JSON, "w", encoding="utf-8") as fh:
     json.dump({"body": body}, fh, ensure_ascii=False, indent=1)
 with open(OUT_TXT, "w", encoding="utf-8") as fh:
     for s in body:
-        fh.write(f"[{s['from']:.1f}-{s['to']:.1f}] {s['content']}\n")
+        fh.write(f"[{_mmss(s['from'])}] {s['content']}\n")
 
 print(f"完成: {len(body)} 条字幕, 耗时 {time.time()-t0:.0f}s", flush=True)
 for s in body[:15]:

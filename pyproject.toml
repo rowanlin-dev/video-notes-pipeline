@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bilibili-video-notes"
-version = "0.1.0"
+version = "1.0.1"
 description = "B站视频转图文笔记并自动入库 ima 知识库的流水线"
 readme = "README.md"
 requires-python = ">=3.9"

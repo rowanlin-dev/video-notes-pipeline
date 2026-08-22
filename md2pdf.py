@@ -15,6 +15,7 @@ import sys
 import shutil
 import argparse
 import subprocess
+import tempfile
 from pathlib import Path
 
 try:
@@ -115,15 +116,22 @@ def main():
               file=sys.stderr)
         sys.exit(2)
 
+    # 每次用独立的临时 user-data-dir，避免 Windows 下 msedge 与系统默认配置锁
+    # 冲突导致 --headless 打印卡死（180s 超时退出）。用完即清。
+    user_data_dir = tempfile.mkdtemp(prefix="md2pdf_edge_")
     cmd = [
         browser, "--headless=new", "--disable-gpu", "--no-sandbox",
         "--no-pdf-header-footer", "--run-all-compositor-stages-before-draw",
         "--virtual-time-budget=10000",
+        f"--user-data-dir={user_data_dir}",
         f"--print-to-pdf={out_pdf.resolve()}",
         html_path.resolve().as_uri(),
     ]
     print(f"[pdf] 使用 {Path(browser).name} 打印 ...")
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    finally:
+        shutil.rmtree(user_data_dir, ignore_errors=True)
 
     if not out_pdf.exists():
         print("[error] PDF 生成失败", file=sys.stderr)

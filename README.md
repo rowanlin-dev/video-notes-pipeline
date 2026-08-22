@@ -56,6 +56,8 @@ pip install -r scripts/requirements.txt
 - 🧹 **垃圾帧过滤**：自动剔除「求三连 / 片头广告 / 求赞」等无信息量帧（见下方重点配置）
 - 🔗 **自动补充外部资料**：视频提到 GitHub / 博客 / 官网等来源时，自动抓取并补充权威说明到笔记（抓取前提示开代理，连不上则只补链接）
 - 📝 **融合字幕 + 截图内容**生成 Markdown + PDF 笔记，每张图带可点击时间戳
+- 🎞️ **烧录字幕 PPT 视频优化**：新增 `--slidegap` 模式，专治「字幕烧录在画面里、无独立字幕轨」的一页一页 PPT 视频——用字幕时间轴空挡或翻页瞬间截图，避免字幕遮挡内容
+- 🤫 **无字幕自动 ASR 兜底**：检测不到官方/AI/外挂字幕轨时，流水线自动调用本地 faster-whisper 转写音频，ASR 保留每句时间戳，空挡截图依旧可用
 - 📚 **可选一键入库 ima** 知识库，按内容自动归档到主题文件夹
 - 🤖 **多 Agent 支持**：WorkBuddy（本仓库作者在用的环境）/ Hermes / Claude Code / Codex CLI
 
@@ -214,6 +216,9 @@ python run_pipeline.py BV1xx411c7mD --start 5:00 --end 25:00
 
 # 纯口播视频（画面变化少）用定时抽帧
 python run_pipeline.py BV1xx411c7mD --mode fixed --interval 60
+
+# 烧录字幕的 PPT 视频（字幕合成在画面里、无独立字幕轨）：用 slidegap 抽帧，避开字幕遮挡
+python run_pipeline.py BV1xx411c7mD --slidegap
 
 # 跳过片头 10 秒（去掉 UP 主求三连/片头动画）
 python run_pipeline.py BV1xx411c7mD --skip-head 10
@@ -412,6 +417,8 @@ python run_pipeline.py BV1xx411c7mD --no-ima
 
 `player/v2` 返回的字幕 `subtitle_url` 可能为空（需 wbi 签名），且 AI 字幕有串台前科（如行车导航语音）。对策：**先抽查字幕内容与标题主题是否一致**；不一致或缺失则删掉 `*_subtitles.{json,txt}`，用本机 ASR 兜底：
 
+> 🆕 **自 v1.0.1 起，流水线会自动兜底**：`run_pipeline` 在检测到 B站返回 `subtitles:[]`（无字幕轨，含字幕烧录在画面里的视频）时，会**自动**调用 `scripts/asr_subtitle.py` 转写音频，无需手动跑 ASR。ASR 结果保留每句 `from/to` 时间戳，因此「字幕空挡截图」仍然可用；连续旁白视频若字幕首尾相接、无空挡，则接受字幕入镜（**绝不裁剪画面去字幕**）。
+
 ```bash
 pip install faster-whisper
 ffmpeg -y -i <video>.mp4 -vn -ar 16000 -ac 1 /tmp/audio_16k.wav
@@ -430,6 +437,8 @@ python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subti
 ### 3. PDF 中文豆腐块（本机无 Chrome/Edge）
 
 `md2pdf.py` 默认依赖 Chrome/Edge 渲染。无浏览器时用 weasyprint + TTF 中文字体：
+
+> 🆕 **Windows 打印卡死修复（v1.0.1）**：`md2pdf.py` 现在为每次打印分配独立的临时 `--user-data-dir`（用完即清理），避免与系统 Edge 默认配置锁冲突导致打印时卡死（旧版偶发 180s 超时退出）。如仍遇到渲染问题，可改用下方 weasyprint 兜底方案。
 
 - ⚠️ **必须用 TTF 版字体**（TrueType 轮廓）：OTF(CFF) 版会被 fontconfig 拒加载。可用 `https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf`（约 16MB 可变字体，URL 需编码 `%5B` `%5D`）
 - 生成：`python scripts/gen_full_note.py <笔记.md> [标题] [字体.ttf]`（内部：md_to_html → 注入 `@font-face` → weasyprint `FontConfiguration` 出 PDF）
@@ -578,6 +587,8 @@ video-notes-pipeline/
 - **操作流程类视频参数（已实现）**：`--threshold`（默认 0.04）和 `--merge-gap`（默认 5.0）从 `run_pipeline.py` 透传给 scene 检测。默认配置适合长视频/课件；操作流程视频（PS/剪辑/代码实操）画面高频小幅变化，建议 `--threshold 0.02 --merge-gap 1.5` 让相邻步骤不被合并、关键操作帧不被漏掉。已用「PS修胡渣」教程（5min 竖屏、313 个场景变化点）端到端验证：scene 检测 → 52 帧 → OCR+哈希去重 → 视觉打分 → 精选 14 帧 → 图内文字提取 → 切块笔记，正文 12567 字、14 帧精准覆盖"应用图像/缩放值 2/补偿值 128"等关键操作界面，图文时间戳对齐。
 - **精选帧数自适应（已实现）**：`--max-frames`（默认 12）是**基础上限而非硬墙**——候选帧多（操作步骤多）时按 `候选数×0.6` 自动放宽，并受 `--hard-max-frames`（默认 40，可用 `FRAME_HARD_MAX` 环境变量覆盖）绝对兜底，防止候选极多时失控（每帧消耗 2 次视觉模型调用）。主题多样性去重（关键词 Jaccard 相似度）在放宽后继续兜底，只保留信息独立的步骤帧。实测候选 24 帧 → 自动放宽至 14。
 - **长视频专项（已实现）**：针对 1 小时以上的长视频做了两端加固。① **纯字幕模式 `--no-video`**：访谈 / 口播类无需配图，跳过视频下载与抽帧，仅用官方字幕生成纯文字笔记（也彻底规避长视频下载超时）。② **切块生成**：视频时长 > 阈值时 `md_note.py` 自动按时间切片（默认每 25 分钟一段，最多 12 段），每段取自身字幕切片 + 该段帧，按学科模板独立生成一节（`## 第N段` 章节，内部 `###` 小节），最后用一次轻量调用合成全局「内容概要」置于最前，插图全局统一编号——避免把数小时字幕 + 全部帧一次性塞爆模型上下文。③ **下载韧性**：`extract_frames.py` 长视频（>60min）自动降分辨率（720p→480p）减小体积；下载增加断点续传（`--continue`）+ 重试循环（最多 4 次，指数退避），应对 B站 mcdn CDN 偶发超时。此外，**长文笔记务必把文本模型切到 Deepseek**（见上文「模型可切换」说明）——长视频切块后单段仍数千字、整篇常破万，`glm-4-flash` 等免费档在超长上下文下易截断或发散，本项目 `.env` 已默认 `TEXT_MODEL=deepseek-chat`。
+- **烧录字幕 PPT 视频抽帧（v1.0.1 新增）**：`run_pipeline.py --slidegap` 走 `extract_frames.py` 的 `extract_slidegap_frames`——用字幕时间轴空挡或翻页瞬间截图，让字幕不遮挡 PPT；场景检测阈值默认提到 `0.1`（字幕闪变分值均 <0.1，真实翻页 ≥0.1），无需碰裁切画面即可「一页一帧」。**硬性约束：永远禁止「裁剪画面去字幕」**——字幕位置不固定、写死 crop 必裁错，且 PPT 全屏时裁底部会把正文一起切掉，比遮挡更糟；无空挡时直接全帧截图、接受字幕入镜。配套：检测不到字幕轨时 `download_subtitles` 自动调用本地 faster-whisper 兜底（ASR 保留 `from/to` 时间戳，`scripts/asr_subtitle.py` 的 TXT 已统一为 `[MMmSSs]` 格式）。
+- **md2pdf Windows 打印卡死修复（v1.0.1）**：`md2pdf.py` 每次打印改用独立临时 `--user-data-dir`，避开与系统 Edge 配置锁冲突导致的卡死。
 
 ### 依赖许可证
 

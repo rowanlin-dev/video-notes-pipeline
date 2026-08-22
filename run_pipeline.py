@@ -181,7 +181,7 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
     run_dir = Path(args.runs_dir) / f"{bvid}_p{page}"
     run_dir.mkdir(parents=True, exist_ok=True)
     frames_root = run_dir
-    scene_dir = run_dir / args.mode
+    scene_dir = run_dir / "scene"
     selected_dir = run_dir / "selected"
     final_dir = run_dir / "final"
     out_dir = run_dir / "output"
@@ -213,15 +213,20 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
 
     # ---- Step 1 抽帧 + 字幕
     if args.from_step <= 1 <= args.to_step:
+        emode = "slidegap" if args.slidegap else args.mode
         cmd = [PY, SCRIPTS / "extract_frames.py", bvid,
-               "--page", page, "--mode", args.mode,
+               "--page", page, "--mode", emode,
                "--subtitle", "--workspace", run_dir, "--frames", frames_root]
         if args.mode == "fixed":
             cmd += ["--interval", args.interval]
-        elif args.mode == "scene":
+        elif emode == "scene":
             # 操作流程类视频（PS/剪辑/代码实操）画面频繁小幅变化：
             # 阈值更低更敏感、合并窗口更短不吞相邻步骤，避免漏掉关键步骤帧
             cmd += ["--threshold", str(args.threshold), "--merge-gap", str(args.merge_gap)]
+        elif emode == "slidegap":
+            # PPT 翻页视频：阈值 0.1 过滤字幕闪变噪声（只留真实翻页大变化），
+            # 合并窗口 1.5s 避免多页被并成一簇。绝不裁剪画面去字幕。
+            cmd += ["--threshold", "0.1", "--merge-gap", "1.5"]
         # 命令行 --start 优先级最高；否则用 --skip-head；否则读 .env 的 SKIP_HEAD_SECONDS
         start_time = args.start
         if not start_time:
@@ -403,6 +408,8 @@ def main():
                     help="scene 模式场景变化灵敏度（越低越敏感；操作流程视频建议 0.02）")
     ap.add_argument("--merge-gap", type=float, default=5.0,
                     help="scene 模式聚类合并窗口秒数（操作流程视频建议 1.5~2，避免相邻步骤被合并）")
+    ap.add_argument("--slidegap", action="store_true",
+                    help="字幕感知 PPT 抽帧：截图落在两句字幕之间的空挡，字幕不遮挡 PPT（纯PPT视频推荐）。绝不裁剪画面去字幕。")
     ap.add_argument("--start", default=None, help="起始时间 MM:SS")
     ap.add_argument("--end", default=None, help="结束时间 MM:SS")
     ap.add_argument("--skip-head", type=int, default=None,
