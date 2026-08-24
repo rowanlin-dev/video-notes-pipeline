@@ -5,8 +5,7 @@ python-docx
 Pillow
 requests
 python-dotenv
-# ASR 兜底（B站 AI 字幕串台/缺失时）
+# ASR 兜底（B站 AI 字幕串台/缺失时自动启用）
 faster-whisper
-# PDF 生成（无 Chrome/Edge 时用 weasyprint + TTF 字体）
-weasyprint
-pymupdf
+# 注意：PDF 默认用系统 Edge/Chrome 无头打印（Windows 10 自带 Edge，无需额外依赖）。
+# 仅当你想用 weasyprint 兜底（无浏览器环境）时才需要装 scripts/requirements-optional.txt

@@ -1,0 +1,7 @@
+# 可选依赖：仅当你「没有 Edge / Chrome」想用 weasyprint 兜底生成 PDF 时才需要
+# 正常 Windows 10 自带 Edge，md2pdf.py 默认用 Edge 无头打印，无需装这些。
+#
+# ⚠️ Windows 注意：weasyprint 还需要系统级 GTK 运行库，pip 装完仍跑不起来，
+# 需另行安装 https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer
+weasyprint
+pymupdf

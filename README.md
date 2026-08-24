@@ -2,15 +2,15 @@
 
 > **B站视频 → 图文笔记 → 知识库 一键流水线**
 >
-> 从B站教育/讲课视频自动生成**带截图、可点击时间戳**的 Markdown + PDF 笔记，
+> 从B站教育/讲课视频自动生成**带截图、可点击时间戳**的 Markdown + PDF 笔记，>   
 > 可选一键归档进 ima 知识库。全程模型免费档即可跑（智谱 GLM-4V-Flash / GLM-4-Flash）。
 >
 > 全流程：`下载视频+字幕 → 全覆盖抽帧 → OCR+哈希去重 → AI视觉打分精选 → 提取图中内容 → 融合生成MD/PDF →（可选）入 ima`
 
-<p align="center">
-  <img src="https://img.shields.io/badge/bilibili-1eabc9.svg?logo=bilibili&logoColor=white&style=flat-square" alt="Bilibili">
-  <img src="https://img.shields.io/badge/python-3.9+-blue.svg?logo=python&style=flat-square" alt="Python">
-  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License">
+<p align="center">  
+  <img src="https://img.shields.io/badge/bilibili-1eabc9.svg?logo=bilibili\&logoColor=white\&style=flat-square" alt="Bilibili">  
+  <img src="https://img.shields.io/badge/python-3.9+-blue.svg?logo=python\&style=flat-square" alt="Python">  
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License">  
 </p>
 
 ## 目录
@@ -21,6 +21,8 @@
 - [⭐ 重点：.env 配置（含垃圾帧过滤）](#-%E9%87%8D%E7%82%B9env-%E9%85%8D%E7%BD%AE%E5%90%AB%E5%9E%83%E5%9C%BE%E5%B8%A7%E8%BF%87%E6%BB%A4)
 - [日常使用](#-%E6%97%A5%E5%B8%B8%E4%BD%BF%E7%94%A8)
 - [完整工作流](#-%E5%AE%8C%E6%95%B4%E5%B7%A5%E4%BD%9C%E6%B5%81)
+- [实测：耗时与 Token（匿名样本）](#%E5%AE%9E%E6%B5%8B%E5%8D%95%E6%9D%A1%E8%A7%86%E9%A2%91%E8%80%97%E6%97%B6%E4%B8%8E-token%E5%8C%BF%E5%90%8D%E6%A0%B7%E6%9C%AC)
+- [断点续跑](#-%E6%96%AD%E7%82%B9%E7%BB%AD%E8%B7%91)
 - [🔧 技术实现](#-%E6%8A%80%E6%9C%AF%E5%AE%9E%E7%8E%B0)
 - [📚 入 ima 知识库（可选）](#-%E5%85%A5-ima-%E7%9F%A5%E8%AF%86%E5%BA%93%E5%8F%AF%E9%80%89)
 - [🛠️ 常见坑与对策（实战沉淀）](#常见坑与对策实战沉淀)
@@ -34,16 +36,34 @@
 
 ## ⚡ 一键安装（复制粘贴给 AI）
 
-```
-请帮我安装 video-notes-pipeline：
+> 适用场景：你直接在 AI 对话框里粘贴下面这段话，让 AI 帮你装。>   
+> 跨平台（Windows / macOS / Linux），且**无论你是否挂 VPN 都能装**：AI 会先探测系统与网络，直连不稳就自动切国内镜像，有代理则直连更快。
 
-git clone https://github.com/rowanlin-dev/video-notes-pipeline.git
-cd video-notes-pipeline
-pip install -r scripts/requirements.txt
-
-安装完成后，把根目录的 .env.example 复制为 .env 并填入 API Key，
-配置好 bilibili_cookies.txt（可选但强烈建议），然后读 README.md 了解如何使用。
 ```
+帮我安装 video-notes-pipeline，请按我当前的系统自动处理（不要假设特定系统或网络）：
+
+1. 先检测系统（Windows / macOS / Linux）与基础工具：若 `python --version`、`pip`、`git` 任一缺失就先装好；
+   若直连 PyPI / GitHub / HuggingFace 不稳定，后续步骤自动改用国内镜像（见下，有代理时可跳过）。
+2. 获取代码（挑能成功的方式）：
+   - 直连：`git clone https://github.com/rowanlin-dev/video-notes-pipeline.git`
+   - 直连不稳就走镜像：`git clone https://ghproxy.net/https://github.com/rowanlin-dev/video-notes-pipeline.git`
+     （还不行换 https://mirror.ghproxy.com/ 或 https://gitclone.com/github.com/...）
+   cd video-notes-pipeline
+3. 装依赖：pip 直连慢就加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`，
+   或先 `pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple` 永久切源：
+   pip install -r scripts/requirements.txt
+4. 装 FFmpeg（抽帧必需）：
+   - Windows：便携版解压到 C:\ffmpeg（pipeline 会自动识别），或 `winget install -e --id Gyan.FFmpeg`
+   - macOS：`brew install ffmpeg`；Linux：`sudo apt-get install ffmpeg`
+5. （可选）提前下载 ASR 模型，避免运行时卡：
+   HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
+   （有代理时直连也行，去掉 HF_ENDPOINT 即可）
+
+装完把 .env.example 复制为 .env 填 API Key，配好 bilibili_cookies.txt，读 README 了解用法。
+```
+
+> 🪟 **Windows 用户不想跟 AI 对话？** 双击本仓库的 `setup_windows.bat` 即可自动完成上述一切>   
+> （仅 Windows 可用，默认走国内源）。macOS / Linux 请用下方「快速开始」手动步骤。
 
 ---
 
@@ -63,32 +83,49 @@ pip install -r scripts/requirements.txt
 
 ## 📊 效果对比
 
-| 输入 | 输出 |
-|------|------|
+| 输入         | 输出                             |
+| ---------- | ------------------------------ |
 | 21 分钟 B站视频 | 7-12 张精选截图 + 完整知识点笔记（MD + PDF） |
-| 130 帧原始截图 | 30 帧去重后 → 7-12 帧 AI 精选（已过滤垃圾帧） |
-| AI 字幕文本 | 融合进结构化笔记，不照搬 |
+| 130 帧原始截图  | 30 帧去重后 → 7-12 帧 AI 精选（已过滤垃圾帧） |
+| AI 字幕文本    | 融合进结构化笔记，不照搬                   |
 
 ---
 
 ## 🚀 快速开始
 
-### 1. 克隆安装
+### 1. 获取代码并安装依赖
+
+**方式 A — 一键脚本（仅 Windows 用户可选）**：双击仓库里的 `setup_windows.bat`，自动完成下面一切。
+
+**方式 B — 手动（跨平台）**：
 
 ```bash
-git clone https://github.com/rowanlin-dev/video-notes-pipeline.git
+# ① 先确保 Python 3.9+ 已装且 pip 可用（Windows 不自带 Python，去 python.org 装并勾选 Add to PATH）
+python --version
+
+# ② 克隆仓库（直连不稳就加 ghproxy 前缀；有代理可直接用原地址）
+git clone https://ghproxy.net/https://github.com/rowanlin-dev/video-notes-pipeline.git
 cd video-notes-pipeline
+
+# ③ pip 永久切到清华源（一次即可，之后所有 pip 都走国内）
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 pip install -r scripts/requirements.txt
 ```
 
-> 推荐使用虚拟环境：`python -m venv venv && venv/Scripts/activate`（Windows）
-> 或直接用仓库里的 `venv/Scripts/python.exe` 跑脚本。
+> 备选 pip 源：阿里云 `https://mirrors.aliyun.com/pypi/simple`、中科大 `https://pypi.mirrors.ustc.edu.cn/simple`。>   
+> 备选 git 镜像：把上例 `https://ghproxy.net/https://github.com/...` 换成>   
+> `https://mirror.ghproxy.com/https://github.com/...` 或 `https://gitclone.com/github.com/...`。>   
+> 想隔离环境可 `python -m venv venv && venv/Scripts/activate`（Windows）/ `source venv/bin/activate`（macOS/Linux），>   
+> 之后用 `venv/Scripts/python.exe run_pipeline.py <BV>` 跑；不建 venv 直接用系统 `python` 也行。
 
-### 2. 安装 FFmpeg
+### 2. 安装 FFmpeg（抽帧必需）
 
-系统环境变量中需要可直接调用 `ffmpeg`（抽帧依赖）。
+系统 PATH 里需要能直接调 `ffmpeg`。**不装 Chocolatey 也能搞定**：
 
-- **Windows**：`choco install ffmpeg`，或从 https://ffmpeg.org 下载后把 `bin` 加入 PATH。
+- **最省事（Windows）**：`winget install -e --id Gyan.FFmpeg`
+- **便携版（推荐，零配置）**：下载    
+  <https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip>    
+  解压到 `C:\ffmpeg`，pipeline 会自动扫描 `C:\ffmpeg\bin`，无需手动加 PATH。
 - **macOS**：`brew install ffmpeg`
 - **Ubuntu/Debian**：`sudo apt-get install ffmpeg`
 
@@ -110,7 +147,7 @@ TEXT_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
 TEXT_MODEL=glm-4-flash
 ```
 
-支持任何 OpenAI 兼容格式的多模态 API（智谱、通义千问、硅基流动、本地 vLLM 等）。
+支持任何 OpenAI 兼容格式的多模态 API（智谱、通义千问、硅基流动、本地 vLLM 等）。  
 `.env.example` 末尾附了通义千问、硅基流动的示例，替换对应几行即可。
 
 ### 4. 配置 B 站 Cookie（强烈建议）
@@ -121,7 +158,7 @@ TEXT_MODEL=glm-4-flash
 cp bilibili_cookies.txt.example bilibili_cookies.txt
 ```
 
-从浏览器 F12 → Application → Cookies → `https://www.bilibili.com` 复制 `SESSDATA` 的值，
+从浏览器 F12 → Application → Cookies → `https://www.bilibili.com` 复制 `SESSDATA` 的值，  
 替换文件里的 `YOUR_SESSDATA_HERE`。
 
 > ⚠️ Cookie 有时效（通常约 1 个月），过期后需重新获取。
@@ -130,39 +167,39 @@ cp bilibili_cookies.txt.example bilibili_cookies.txt
 
 ## ⭐ 重点：.env 配置（含垃圾帧过滤）
 
-> 这一节是**最影响成品质量、却最容易被跳过**的配置，建议先读完再跑。
+> 这一节是**最影响成品质量、却最容易被跳过**的配置，建议先读完再跑。>   
 > 把根目录的 `.env.example` 复制为 `.env` 后，主要配置项如下：
 
-| 配置项 | 必填 | 默认值 | 说明 |
-|---|---|---|---|
-| `VISION_API_KEY` | ✅ | - | 视觉模型 API Key（智谱/其它） |
-| `VISION_BASE_URL` | - | 智谱 | 视觉模型接口地址 |
-| `VISION_MODEL` | - | glm-4v-flash | 视觉模型名（打分 + 提取图中文字） |
-| `TEXT_API_KEY` | - | 复用 VISION | 文本模型 API Key |
-| `TEXT_BASE_URL` | - | 复用 VISION | 文本模型接口地址 |
-| `TEXT_MODEL` | - | glm-4-flash | 文本模型名（写笔记正文 + 评论总结，纯文本任务） |
-| `WORKERS` | - | 8 | 视觉调用并发数 |
-| `TIMEOUT` | - | 120 | 单次视觉调用超时（秒） |
-| `VISION_MAX_TOKENS` | - | 1024 | 视觉模型输出上限；智谱 flash 硬上限 1024 |
+| 配置项                 | 必填 | 默认值          | 说明                         |
+| ------------------- | -- | ------------ | -------------------------- |
+| `VISION_API_KEY`    | ✅  | -            | 视觉模型 API Key（智谱/其它）        |
+| `VISION_BASE_URL`   | -  | 智谱           | 视觉模型接口地址                   |
+| `VISION_MODEL`      | -  | glm-4v-flash | 视觉模型名（打分 + 提取图中文字）         |
+| `TEXT_API_KEY`      | -  | 复用 VISION    | 文本模型 API Key               |
+| `TEXT_BASE_URL`     | -  | 复用 VISION    | 文本模型接口地址                   |
+| `TEXT_MODEL`        | -  | glm-4-flash  | 文本模型名（写笔记正文 + 评论总结，纯文本任务）  |
+| `WORKERS`           | -  | 8            | 视觉调用并发数                    |
+| `TIMEOUT`           | -  | 120          | 单次视觉调用超时（秒）                |
+| `VISION_MAX_TOKENS` | -  | 1024         | 视觉模型输出上限；智谱 flash 硬上限 1024 |
 
 > **模型可切换**：`.env` 中 `VISION_*`（帧打分 / 识图，必须用视觉模型）与 `TEXT_*`（写笔记正文 + 评论总结，纯文本任务）是分开的。当前启用项写在前面、暂不用的写在「备用」注释块里——**所有 Key 都保留**，切换模型只需取消 / 加注释，不必重新申请 Key。本项目用 `deepseek-chat` 作文本模型（chat 档，非 pro），`glm-4v-flash` 作视觉模型。
 >
-> **📝 长文 / 长视频笔记强烈推荐用 Deepseek 写正文**：笔记正文由 `TEXT_MODEL` 生成。短笔记用 `glm-4-flash` 免费档即可；但**长文（尤其 3 小时访谈、1 小时+ 技术实操这类切块后单段仍有数千字、整篇破万字）务必把 `TEXT_MODEL` 切到 `deepseek-chat` 或更强的长上下文模型**——Deepseek 中文长文写作更稳、上下文更长，`glm-4-flash` 在超长输入下更易截断或发散。本项目 `.env` 已默认将 `TEXT_*` 指向 `deepseek-chat`。
-| `IMA_KB_ID` | - | - | 默认入库知识库 ID；留空则不入库，需用 `--route`/`--kb-id` |
-| `AD_KEYWORDS` | - | 见 `.env.example` | **字幕广告段过滤**，命中即跳过该时间段抽帧 |
-| `AD_CONTEXT_SECONDS` | - | 20 | 广告关键词命中后向前后扩展的秒数 |
-| `FRAME_TYPE_TRASH` | - | `meme,blackscreen,ad,face` | AI 识别的低价值画面类型，直接剔除 |
-| `FRAME_TRASH_KEYWORDS` | - | 见 `.env.example` | **垃圾帧黑名单**，逗号分隔，支持正则 |
-| `FRAME_MIN_SCORE` | - | 3 | 入选帧最低 AI 分数 |
-| `SKIP_HEAD_SECONDS` | - | 0 | 跳过片头 N 秒，去掉求三连/片头动画 |
-| `LEARNED_TRASH_FILE` | - | `trash_learned.json` | 自进化黑名单文件路径 |
+> **📝 长文 / 长视频笔记强烈推荐用 Deepseek 写正文**：笔记正文由 `TEXT_MODEL` 生成。短笔记用 `glm-4-flash` 免费档即可；但**长文（尤其 3 小时访谈、1 小时+ 技术实操这类切块后单段仍有数千字、整篇破万字）务必把 `TEXT_MODEL` 切到 `deepseek-chat` 或更强的长上下文模型**——Deepseek 中文长文写作更稳、上下文更长，`glm-4-flash` 在超长输入下更易截断或发散。本项目 `.env` 已默认将 `TEXT_*` 指向 `deepseek-chat`。>   
+> | `IMA_KB_ID` | - | - | 默认入库知识库 ID；留空则不入库，需用 `--route`/`--kb-id` |>   
+> | `AD_KEYWORDS` | - | 见 `.env.example` | **字幕广告段过滤**，命中即跳过该时间段抽帧 |>   
+> | `AD_CONTEXT_SECONDS` | - | 20 | 广告关键词命中后向前后扩展的秒数 |>   
+> | `FRAME_TYPE_TRASH` | - | `meme,blackscreen,ad,face` | AI 识别的低价值画面类型，直接剔除 |>   
+> | `FRAME_TRASH_KEYWORDS` | - | 见 `.env.example` | **垃圾帧黑名单**，逗号分隔，支持正则 |>   
+> | `FRAME_MIN_SCORE` | - | 3 | 入选帧最低 AI 分数 |>   
+> | `SKIP_HEAD_SECONDS` | - | 0 | 跳过片头 N 秒，去掉求三连/片头动画 |>   
+> | `LEARNED_TRASH_FILE` | - | `trash_learned.json` | 自进化黑名单文件路径 |
 
 ### 🧹 垃圾帧过滤（强烈建议先配）
 
-视频里的「一键三连」「完整资料 免费领取」「扫码加微信」「黑屏字幕」「表情包」「讲师大头」
+视频里的「一键三连」「完整资料 免费领取」「扫码加微信」「黑屏字幕」「表情包」「讲师大头」  
 本质都是**没有信息量的帧**，混入笔记纯属噪音。本工具用四层机制把它们挡在门外：
 
-**① 字幕广告段过滤（从源头拦截）** — 下载字幕后扫描 `AD_KEYWORDS`，命中即视为广告/卖课段，
+**① 字幕广告段过滤（从源头拦截）** — 下载字幕后扫描 `AD_KEYWORDS`，命中即视为广告/卖课段，  
 向前后扩展 `AD_CONTEXT_SECONDS` 秒后**抽帧时直接跳过**。避免截到 "扣 666 领资料""加小助理" 等画面。
 
 ```ini
@@ -180,66 +217,70 @@ SKIP_HEAD_SECONDS=10          # 跳过片头 10 秒，直接去掉求三连/片�
 ```
 
 - 命中帧的 theme / keywords / OCR 文字含黑名单词即剔除；`FRAME_MIN_SCORE` 低于该分也不入选。
-- AI 会给每帧输出 `type`（diagram/slide/code_ui/demo/meme/blackscreen/ad/face/other），
+- AI 会给每帧输出 `type`（diagram/slide/code_ui/demo/meme/blackscreen/ad/face/other），    
   `FRAME_TYPE_TRASH` 中的类型直接剔除。
 - 关键词**支持正则**，例如 `求?赞|三?连` 可同时命中「求赞」「三连」「求三连」。
 - 临时对某视频生效：`python run_pipeline.py <BV> --skip-head 10`
 
-**③ OCR 二次校验** — `auto_select.py` 会用 OCR 再读候选帧，图中文字命中广告词直接剔除，
+**③ OCR 二次校验** — `auto_select.py` 会用 OCR 再读候选帧，图中文字命中广告词直接剔除，  
 拦截 "资料页""免费领取" 等视觉模型可能误判为 slide 的帧。
 
 **④ 自进化黑名单（治本）** — 发现漏网垃圾帧后：
 
 ```bash
+# 一句话指令：这张 frame_0002.jpg 是垃圾帧，记下来让以后自动剔除同类帧
 python learn_trash.py runs/BV1AaN162EsX_p1 --frame frame_0002.jpg
 ```
 
-系统会读取该帧的 theme/keywords/图中文字，追加到 `trash_learned.json`；
+系统会读取该帧的 theme/keywords/图中文字，追加到 `trash_learned.json`；  
 下次跑任意视频，`auto_select.py` 自动加载并剔除同类帧。加 `--delete` 可同时从当前 run 删掉该帧。
 
-> 如果一个视频确实只有口播 + 表情包 + 黑屏字幕，过滤后可能得到 **0 张配图**。
+> 如果一个视频确实只有口播 + 表情包 + 黑屏字幕，过滤后可能得到 **0 张配图**。>   
 > 此时会自动生成**纯文字笔记**并正常入库，不会硬塞无意义截图。
 
 ---
 
 ## 💡 日常使用
 
+> 下面每条命令上方都附了一句「一句话指令」——你不用记参数，直接把那句话发给 AI，让它替你跑。
+> （`<BV>` 换成真实 BV 号，如 `BV1xx411c7mD`）
+
 ```bash
-# 最常用：一条命令搞定（生成 MD + PDF，未配知识库则跳过入库）
+# 解释：最常用的一站式命令。自动下载 → 抽帧 → AI 视觉精选 → 生成 MD + PDF；未配置 ima 时跳过入库。
+# 一句话指令：帮我总结视频 BVXXXXXX（生成图文笔记，自动入库或出 MD+PDF）
 python run_pipeline.py BV1xx411c7mD
 
-# 指定分P
+# 解释：多 P 视频只处理指定分 P（从 1 开始计）。
+# 一句话指令：只转这个视频的第 3 分 P
 python run_pipeline.py BV1xx411c7mD --page 3
 
-# 只处理某个时间段
+# 解释：只处理视频里某一段（开始/结束，格式 分:秒 或 秒）。
+# 一句话指令：只处理 5:00–25:00 这段
 python run_pipeline.py BV1xx411c7mD --start 5:00 --end 25:00
 
-# 纯口播视频（画面变化少）用定时抽帧
+# 解释：纯口播/画面几乎不变的视频，用定时抽帧（每 interval 秒一张）比场景切换检测更稳。
+# 一句话指令：这是纯口播/画面变化少的视频，用定时抽帧
 python run_pipeline.py BV1xx411c7mD --mode fixed --interval 60
 
-# 烧录字幕的 PPT 视频（字幕合成在画面里、无独立字幕轨）：用 slidegap 抽帧，避开字幕遮挡
+# 解释：字幕烧进画面（无独立字幕轨）的 PPT 视频，用 slidegap 把抽帧落在翻页空挡、避开字幕遮挡。
+# 一句话指令：这是字幕烧进画面的 PPT 视频，用 slidegap 避开字幕遮挡
 python run_pipeline.py BV1xx411c7mD --slidegap
 
-# 跳过片头 10 秒（去掉 UP 主求三连/片头动画）
+# 解释：跳过头 N 秒（片头求三连/动画），避免把无关画面选进笔记。
+# 一句话指令：跳过片头 10 秒（去掉求三连/片头动画）
 python run_pipeline.py BV1xx411c7mD --skip-head 10
 
-# 想要更多配图
+# 解释：程序默认精选约 7–12 张；长视频有用画面多会超出上限被丢弃。--max-frames 提高上限（数字越大选用越多，传很大的数近似无上限）。
+# 一句话指令：帮我总结视频 BVXXXXXX，这视频有点长，可以选用超出默认上限的截图进笔记
 python run_pipeline.py BV1xx411c7mD --max-frames 20
 
-# 按内容自动归档进 ima（推荐，最省事）
+# 解释：配置了 ima 后，加 --route 让 pipeline 在生成 MD+PDF 后自动上传并按内容归档（最省事）。
+# 一句话指令：（已配置ima）帮我总结视频 BVXXXXXX 并入库ima
 python run_pipeline.py BV1xx411c7mD --route
-```
 
-### 断点续跑
-
-某一步失败了不用从头再来（视频和帧已缓存）：
-
-```bash
-# 从第 4 步（自动精选）继续
-python run_pipeline.py BV1xx411c7mD --from-step 4
-
-# 只重新生成笔记（改了 prompt 或想换模型时用）
-python run_pipeline.py BV1xx411c7mD --from-step 6
+# 解释：笔记已生成、ima 也已配置时，不必重跑整条 pipeline，直接用 to_ima 把成品 PDF 入库。
+# 一句话指令：（已生成笔记且配置了ima）把这条笔记入库 ima
+python to_ima.py --pdf runs/BV1xx411c7mD_p1/output/视频标题.pdf --route --verify
 ```
 
 ---
@@ -290,7 +331,83 @@ runs/BV1xx411c7mD_p1/
 
 ---
 
-## 🔧 技术实现
+## ⏱️ 实测：单条视频耗时与 Token（匿名样本）
+
+> 以下数据来自一次真实运行的统计，**已隐去具体视频的标题 / BV 号 / UP 主**，仅保留时长作为参照，
+> 让你对「跑一条视频要多久、花多少」有直观预期。
+
+**样本：时长约 3 分 22 秒的视频**（无官方字幕，走本地 ASR 兜底）
+
+### 一、总览
+
+| 项目 | 数值 |
+|------|------|
+| 总耗时（下载 → PDF 成品） | 约 8–9 分钟 |
+| 总 Token 消耗 | 约 10.2 万（估算） |
+| 总成本 | 不到 ¥0.1 |
+| 产出 | PDF 17 页（7 张图解）+ Markdown + 7 张精选图 |
+| 最终去向 | 入库 ima 知识库（按内容自动归档到主题文件夹） |
+
+### 二、分步耗时明细
+
+| 环节 | 耗时 | 说明 |
+|------|------|------|
+| ① 视频下载 + 合并 | ~1–2 分钟 | B站 412 风控拦截 → 改用 playurl API + curl 绕过；ffmpeg 合并视频 |
+| ② ASR 转写（语音转文字） | 124 秒 | faster-whisper 本地模型，转出 84 条字幕（视频无官方字幕轨） |
+| ③ 首次抽帧 + 打分 + 笔记 | ~2–3 分钟 | scene 场景检测模式把画面变化合并成 1 帧 → 失败，决定重抽 |
+| ④ 定时重抽帧（fixed） | ~2 秒 | 每 20 秒抽一帧，得 10 帧 |
+| ⑤ 帧精选（smart_select） | ~30 秒 | OCR 预筛 + 感知哈希去重 → 8 帧 |
+| ⑥ 视觉打分 | ~4 秒 | 多模态模型 glm-4v-flash 逐帧打分 |
+| ⑦ 自动精选 | ~13 秒 | 按分数 + 主题去重，得最终 7 帧 |
+| ⑧ 图内文字提取 | ~10 秒 | glm-4v-flash 提取图中文字/流程（供笔记引用） |
+| ⑨ 笔记生成（MD） | ~61 秒 | deepseek-chat 按学科模板分块生成正文 |
+| ⑩ PDF 生成 | ~4 秒 | weasyprint + Noto 中文字体嵌入 |
+| **合计** | **≈ 8–9 分** | 含一次失败的 scene 抽帧尝试与重抽 |
+
+> 备注：因首次 scene 抽帧失败（动画类视频画面持续变化，场景合并只剩 1 帧），实际做了两次抽帧与两次笔记生成，上表已包含重试成本。
+
+### 三、Token 消耗明细（估算）
+
+> ⚠️ 流水线脚本不记录每次 API 调用的 usage 字段，以下为基于产物规模与调用次数的估算值（误差约 ±20%）。精确数值可到 DeepSeek / 智谱开放平台控制台核对。
+
+**各环节消耗**
+
+| 环节 | 模型 | 调用次数 | 估算 Token |
+|------|------|----------|------------|
+| 学科分类 | deepseek-chat | 1 | ~600 |
+| 视觉打分（1+8 帧） | glm-4v-flash（智谱） | 9 | ~29,000 |
+| 图内文字提取（1+7 帧） | glm-4v-flash（智谱） | 8 | ~44,000 |
+| 笔记生成（2 次） | deepseek-chat | 4–6 | ~28,600 |
+| **合计** | | | **≈ 102,000** |
+
+**按服务商汇总**
+
+| 服务商 | 模型 | 估算 Token | 费用参考 |
+|--------|------|------------|----------|
+| 智谱 | glm-4v-flash（视觉） | ≈ 73,000 | ≈ ¥0.07（约 ¥0.001/千 token） |
+| DeepSeek | deepseek-chat（文本） | ≈ 29,000 | < ¥0.01（约 ¥0.2–2/百万 token） |
+| 本地推理 | faster-whisper（ASR 转写） | 不计 Token | 免费（本地运行，无 API 调用） |
+| **总计** | | **≈ 102,000** | **< ¥0.1** |
+
+**成本构成说明**
+
+- 视觉 Token 是大头（占约 72%）：每张图片约折算 2,000 Token，打分 + 提取共 17 次图片调用。
+- 本地 faster-whisper 完成 124 秒语音转写，不产生任何 API 费用。
+- 总成本不到 0.1 元人民币，约等于「一次免费本地转写 + 两次轻量云 API 调用」。
+
+## 🔁 断点续跑
+
+某一步失败了不用从头再来（视频和帧已缓存）：
+
+```bash
+# 一句话指令：之前跑到一半断了，从第 4 步（自动精选）继续
+python run_pipeline.py BV1xx411c7mD --from-step 4
+
+# 一句话指令：改了 prompt/想换模型，只重新生成笔记
+python run_pipeline.py BV1xx411c7mD --from-step 6
+```
+
+---
 
 本节说明视频与字幕的获取方式，以及常见的下载拦截问题（更偏实现细节，普通用户可跳过）。
 
@@ -334,27 +451,29 @@ B站对访问 `www.bilibili.com` 视频页的出口 IP 有 WAF 风控：
 
 ## 📚 入 ima 知识库（可选）
 
-> 把笔记直接归档进**腾讯 ima 知识库**，省去手动下载再上传。
+> 把笔记直接归档进**腾讯 ima 知识库**，省去手动下载再上传。>   
 > 这是**可选功能**，依赖本机已安装的 ima WorkBuddy skill，不影响核心笔记生成。
 
 > **💡 选用哪种 ima 接入方式？**
+>
 > - **用 WorkBuddy**：直接用 WorkBuddy 自带的 **ima 连接器**最好 —— 连接器管理页一键「信任/连接」即可，功能最全、持续更新，无需手动装 skill。
-> - **非 WorkBuddy 环境**（Hermes、Claude Desktop、Cursor、Cline 等任意 MCP 客户端）：推荐安装腾讯官方 **ima-skill** → https://ima.qq.com/agent-interface ，按页面指引部署后，即可获得与 WorkBuddy 内置连接器一致的 ima 能力（知识库 + 笔记的读写搜）。
+> - **非 WorkBuddy 环境**（Hermes、Claude Desktop、Cursor、Cline 等任意 MCP 客户端）：推荐安装腾讯官方 **ima-skill** → <https://ima.qq.com/agent-interface> ，按页面指引部署后，即可获得与 WorkBuddy 内置连接器一致的 ima 能力（知识库 + 笔记的读写搜）。
 
 ### 前置条件
 
-ima 自动入库依赖腾讯 ima 的 WorkBuddy skill：`~/.workbuddy/skills/ima-skills`
-（Windows：`C:\Users\<用户名>\.workbuddy\skills\ima-skills`）。
-该 skill 提供 `ima_api.cjs`、`preflight-check.cjs`、`cos-upload.cjs` 等脚本，
+ima 自动入库依赖腾讯 ima 的 WorkBuddy skill：`~/.workbuddy/skills/ima-skills`  
+（Windows：`C:\Users\<用户名>\.workbuddy\skills\ima-skills`）。  
+该 skill 提供 `ima_api.cjs`、`preflight-check.cjs`、`cos-upload.cjs` 等脚本，  
 **不属于本仓库代码**，需在 WorkBuddy 连接器管理页安装并「信任」。
 
 配置步骤：
 
 1. 打开 WorkBuddy → 连接器管理 → 找到 ima 连接器 → 点击「信任/连接」。
-2. 按 ima skill 提示填写 `Client ID` 和 `API Key`（通常写到
+2. 按 ima skill 提示填写 `Client ID` 和 `API Key`（通常写到     
    `~/.config/ima/client_id` 和 `~/.config/ima/api_key`）。
 3. 验证凭证有效：
    ```bash
+   # 一句话指令：列出我能入库的 ima 知识库
    python to_ima.py --list-kb
    ```
    能列出知识库即配置成功。
@@ -364,10 +483,11 @@ ima 自动入库依赖腾讯 ima 的 WorkBuddy skill：`~/.workbuddy/skills/ima-
 **方式 A：按内容自动归档（推荐，最省事）**
 
 ```bash
+# 一句话指令：把这个视频的笔记按内容自动归档进 ima 知识库
 python run_pipeline.py BV1xx411c7mD --route
 ```
 
-系统会读笔记标题 + 大纲，自动选择最匹配的知识库，并自动创建/复用 2-6 字的中文主题文件夹
+系统会读笔记标题 + 大纲，自动选择最匹配的知识库，并自动创建/复用 2-6 字的中文主题文件夹  
 （如「多租户」「Vue3」），把 PDF 上传进去。
 
 **方式 B：指定固定知识库**
@@ -383,12 +503,14 @@ IMA_KB_ID=你的知识库ID
 **方式 C：命令行临时指定**
 
 ```bash
+# 一句话指令：把这个视频的笔记入库到「全栈开发知识库」
 python run_pipeline.py BV1xx411c7mD --kb-name "全栈开发知识库" --folder-id folder_xxx
 ```
 
 ### 验证上传链路（不污染知识库）
 
 ```bash
+# 一句话指令：先验证一下上传链路（只跑流程，不真入库）
 python to_ima.py --pdf runs/BVxxx_p1/output/xxx.pdf --route --verify
 ```
 
@@ -397,6 +519,7 @@ python to_ima.py --pdf runs/BVxxx_p1/output/xxx.pdf --route --verify
 ### 跳过 ima 入库
 
 ```bash
+# 一句话指令：只生成笔记，不入库 ima
 python run_pipeline.py BV1xx411c7mD --no-ima
 ```
 
@@ -420,12 +543,13 @@ python run_pipeline.py BV1xx411c7mD --no-ima
 > 🆕 **自 v1.0.1 起，流水线会自动兜底**：`run_pipeline` 在检测到 B站返回 `subtitles:[]`（无字幕轨，含字幕烧录在画面里的视频）时，会**自动**调用 `scripts/asr_subtitle.py` 转写音频，无需手动跑 ASR。ASR 结果保留每句 `from/to` 时间戳，因此「字幕空挡截图」仍然可用；连续旁白视频若字幕首尾相接、无空挡，则接受字幕入镜（**绝不裁剪画面去字幕**）。
 
 ```bash
-pip install faster-whisper
+pip install faster-whisper -i https://pypi.tuna.tsinghua.edu.cn/simple
 ffmpeg -y -i <video>.mp4 -vn -ar 16000 -ac 1 /tmp/audio_16k.wav
 # 国内需镜像 + 禁用 xet 下载模型
 HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 \
   huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
 # 语音转文字(ASR)：WhisperModel(..., device="cpu", compute_type="int8")，transcribe(language="zh")
+# 一句话指令：这个视频没字幕/字幕串台，用本地 ASR 把音频转成字幕
 python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subtitles.json
 ```
 
@@ -436,12 +560,16 @@ python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subti
 
 ### 3. PDF 中文豆腐块（本机无 Chrome/Edge）
 
-`md2pdf.py` 默认依赖 Chrome/Edge 渲染。无浏览器时用 weasyprint + TTF 中文字体：
+`md2pdf.py` 默认依赖 Chrome/Edge 渲染（**Windows 10 自带 Edge，正常不需要额外装**）。  
+只有「完全没有浏览器」的环境才用 weasyprint 兜底——需先装可选依赖：  
+`pip install -r scripts/requirements-optional.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`  
+（⚠️ Windows 下 weasyprint 还需额外装 GTK 运行库，见该文件内注释），再用 TTF 中文字体：
 
 > 🆕 **Windows 打印卡死修复（v1.0.1）**：`md2pdf.py` 现在为每次打印分配独立的临时 `--user-data-dir`（用完即清理），避免与系统 Edge 默认配置锁冲突导致打印时卡死（旧版偶发 180s 超时退出）。如仍遇到渲染问题，可改用下方 weasyprint 兜底方案。
 
 - ⚠️ **必须用 TTF 版字体**（TrueType 轮廓）：OTF(CFF) 版会被 fontconfig 拒加载。可用 `https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf`（约 16MB 可变字体，URL 需编码 `%5B` `%5D`）
-- 生成：`python scripts/gen_full_note.py <笔记.md> [标题] [字体.ttf]`（内部：md_to_html → 注入 `@font-face` → weasyprint `FontConfiguration` 出 PDF）
+- 一句话指令：本机没浏览器，让 AI 用 weasyprint 把这份笔记生成中文 PDF：
+  `python scripts/gen_full_note.py <笔记.md> [标题] [字体.ttf]`（内部：md_to_html → 注入 `@font-face` → weasyprint `FontConfiguration` 出 PDF）
 - 验证：`pymupdf` 读 PDF，检查 `get_fonts()` 含 Noto Sans SC 且 `get_text()` 中文正常
 
 ### 4. 智谱 API 429 限流（并发打分/提取）
@@ -462,18 +590,18 @@ python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subti
 
 **Q：提示 412 / 请求被拦截**
 
-B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未登录最易被拦；② 关掉 VPN/代理；
+B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未登录最易被拦；② 关掉 VPN/代理；  
 ③ 等几分钟，或把 `WORKERS` 降到 4。「能查到标题却下不了视频」是 412 典型表现，不是脚本坏了。
 
 **Q：没有字幕 / 字幕串台（转写内容与视频无关）**
 
-不是所有视频都有官方 AI 字幕，且 B站 AI 字幕偶发串台。两种情况都直接用**本地语音转文字(ASR)兜底**：
-`scripts/asr_subtitle.py` 用 faster-whisper 把音轨转成字幕，`scripts/fix_subtitles.py` 可选做 LLM 术语修正，
+不是所有视频都有官方 AI 字幕，且 B站 AI 字幕偶发串台。两种情况都直接用**本地语音转文字(ASR)兜底**：  
+`scripts/asr_subtitle.py` 用 faster-whisper 把音轨转成字幕，`scripts/fix_subtitles.py` 可选做 LLM 术语修正，  
 再 `--from-step 6` 重生成笔记，详见上方「常见坑与对策 §2」。配好 `SESSDATA` 能提高拿到官方字幕的概率，但不再依赖它。
 
 **Q：笔记里混进了求点赞/三连的片头帧**
 
-见上方「⭐ 重点：.env 配置」里的**垃圾帧过滤**，加 `FRAME_TRASH_KEYWORDS` 或 `--skip-head` 即可；
+见上方「⭐ 重点：.env 配置」里的**垃圾帧过滤**，加 `FRAME_TRASH_KEYWORDS` 或 `--skip-head` 即可；  
 反复出现的漏网帧用 `learn_trash.py` 写进自进化黑名单。
 
 **Q：想换模型**
@@ -494,11 +622,11 @@ B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未
 
 ### WorkBuddy（本仓库作者在用的环境）
 
-- 直接在本项目目录里和 Agent 对话，让它执行 `python run_pipeline.py <BV号>` 即可；Agent 会按
+- 直接在本项目目录里和 Agent 对话，让它执行 `python run_pipeline.py <BV号>` 即可；Agent 会按    
   `SKILL.md` 的流程跑完整条流水线。
-- 想一句话触发：把本项目封装为 WorkBuddy 用户级 skill（放到
+- 想一句话触发：把本项目封装为 WorkBuddy 用户级 skill（放到    
   `~/.workbuddy/skills/video-notes-pipeline/`），之后直接在对话框说「总结这个 B站视频」。
-- ima 自动入库依赖 WorkBuddy 的 ima 连接器：需先在连接器管理里信任 / 连接 ima，
+- ima 自动入库依赖 WorkBuddy 的 ima 连接器：需先在连接器管理里信任 / 连接 ima，    
   再运行带 `--route` 的流水线（见上方「📚 入 ima 知识库」）。
 
 ### Hermes Agent
@@ -596,18 +724,18 @@ video-notes-pipeline/
 
 本项目直接依赖的开源组件及其许可证如下：
 
-| 依赖 | 许可证 |
-|---|---|
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Unlicense |
-| [ffmpeg](https://ffmpeg.org/) | LGPL/GPL |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | Apache-2.0 |
-| [ImageHash](https://github.com/JohannesBuchner/imagehash) | BSD |
-| [python-docx](https://github.com/python-openxml/python-docx) | MIT |
-| [requests](https://github.com/psf/requests) | Apache-2.0 |
-| [python-markdown](https://github.com/Python-Markdown/markdown) | BSD |
-| [python-dotenv](https://github.com/theskumar/python-dotenv) | BSD |
-| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT |
-| [weasyprint](https://github.com/Kozea/WeasyPrint) | BSD-3-Clause |
+| 依赖                                                             | 许可证          |
+| -------------------------------------------------------------- | ------------ |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp)                     | Unlicense    |
+| [ffmpeg](https://ffmpeg.org/)                                  | LGPL/GPL     |
+| [RapidOCR](https://github.com/RapidAI/RapidOCR)                | Apache-2.0   |
+| [ImageHash](https://github.com/JohannesBuchner/imagehash)      | BSD          |
+| [python-docx](https://github.com/python-openxml/python-docx)   | MIT          |
+| [requests](https://github.com/psf/requests)                    | Apache-2.0   |
+| [python-markdown](https://github.com/Python-Markdown/markdown) | BSD          |
+| [python-dotenv](https://github.com/theskumar/python-dotenv)    | BSD          |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper)    | MIT          |
+| [weasyprint](https://github.com/Kozea/WeasyPrint)              | BSD-3-Clause |
 
 本仓库仅通过 pip/独立二进制形式调用上述依赖，未嵌入或修改其源码。各依赖仍保留原有许可证，相关许可证文本见对应官方仓库。
 
