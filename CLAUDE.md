@@ -1,16 +1,35 @@
 # Bilibili Video Notes
 
-从 B 站教育/讲课视频生成带截图的 DOCX 学习笔记。
+Turn Bilibili educational videos into illustrated **Markdown + PDF** notes with clickable timestamps, optionally archived into the ima knowledge base.
+
+See **SKILL.md** for the full reference. This file is a quick-start for AI agents/collaborators.
 
 ## Workflow
 
-1. Download video + AI subtitles
-2. Extract frames every 10 seconds (cover mode)
-3. OCR + perceptual hash deduplication
-4. Concurrent AI vision scoring, then manually select 7-12 final frames
-5. Concurrent AI extraction of text/formulas/tables/concepts from final frames
-6. Fuse subtitles + extracted image content into DOCX notes
-7. Verify + clean up temporary files
+Orchestrated by `run_pipeline.py` in seven steps (resume from any step with `--from-step`):
+
+1. Download video + official AI subtitles (`scripts/extract_frames.py`)
+2. OCR pre-filter + perceptual-hash dedup (`scripts/smart_select.py`)
+3. Multimodal vision scoring (`scripts/score_frames_concurrent.py --mode score`)
+4. Auto-select by score + topic diversity (`auto_select.py`)
+5. Extract text/figures/formulas from selected frames (`score_frames_concurrent.py --mode extract`)
+6. Fuse subtitles + extracted content into Markdown + PDF (`md_note.py` / `md2pdf.py`)
+7. (Optional) Upload to ima knowledge base (`to_ima.py`)
+
+## Time Estimate
+
+**Tell the user the estimated processing time BEFORE starting** (empirical formula, v1.0.2, see SKILL.md):
+
+> **Processing time ≈ 5 + 0.56 × video minutes** (minutes; floor ~6 min)
+
+| Video length | Estimated total | Where the time goes |
+|---------|-------------|-------------|
+| ≤5 min | ~6-8 min | Fixed overhead (download/frames/notes/PDF/upload) |
+| 10 min | ~10-12 min | Download ~1min + ASR + frame scoring |
+| 30 min | ~20-25 min | ASR transcription dominates (~0.5-0.7× audio length) |
+| 60 min | ~35-40 min | Consider `--segment-minutes 25` |
+
+Measured samples: 3.6 min → ~6 min; 10 min → ~12 min; 33 min → ~23 min.
 
 ## Setup
 
@@ -18,7 +37,7 @@
 pip install -r scripts/requirements.txt
 ```
 
-System ffmpeg required.
+System `ffmpeg` required.
 
 Configure API:
 
@@ -36,75 +55,22 @@ cp bilibili_cookies.txt.example bilibili_cookies.txt
 
 ## Usage
 
-When the user provides a Bilibili link and asks for notes, run:
-
 ```bash
-# 1. extract
-python scripts/extract_frames.py <bvid> \
-  --page <n> \
-  --mode cover \
-  --subtitle \
-  --workspace ./workspace \
-  --frames ./frames/pXX
+# One-shot (default current P)
+python run_pipeline.py BV1xx411c7mD
 
-# 2. deduplicate
-python scripts/smart_select.py ./frames/pXX/fixed \
-  --output-dir ./frames/pXX/selected \
-  --skip-clustering
+# Operation-type videos (code demos/editing): lower threshold
+python run_pipeline.py BV1hD42137sx --threshold 0.02 --merge-gap 1.5
 
-# 3. score all selected frames
-python scripts/score_frames_concurrent.py \
-  --frames ./frames/pXX/selected \
-  --output ./workspace/vision_scores_pXX.json \
-  --workers 16
-
-# 4. manually choose final frames and copy to final/
-mkdir -p ./frames/pXX/final
-cp ./frames/pXX/selected/frame_XXXX.jpg ./frames/pXX/final/
-# ...
-
-# 5. extract content from final frames
-python scripts/score_frames_concurrent.py \
-  --frames ./frames/pXX/final \
-  --output ./workspace/vision_extract_pXX.json \
-  --mode extract \
-  --workers 16
-
-# 6. extract key causal sentences from subtitles before writing DOCX
-python scripts/extract_key_sentences.py \
-  ./workspace/<bvid>_p<n>_subtitles.txt
-
-# 7. generate DOCX
-cp templates/docx_note_v2.py ./workspace/gen_pXX_v1.py
-# edit TITLE, SOURCE, FRAMES, SECTIONS based on subtitles + vision_extract_pXX.json
-# make sure causal sentences in <bvid>_p<n>_subtitles.key.json are covered
-python ./workspace/gen_pXX_v1.py
-
-# 8. verify (with subtitle key-sentence coverage check)
-python scripts/verify_docx.py ./workspace/<output>.docx --subtitle ./workspace/<bvid>_p<n>_subtitles.txt
-
-# 9. cleanup
-rm -f ./workspace/<bvid>_p<n>.mp4
-rm -f ./workspace/<bvid>_p<n>_subtitles.json
-rm -f ./workspace/gen_pXX_v1.py
+# Resume from step 4
+python run_pipeline.py BV1xx411c7mD --from-step 4
 ```
 
-## Critical Rules
+Outputs land in `runs/<BV>_p<N>/output/`. More parameters in SKILL.md.
 
-- Use `--mode cover` for extraction, not scene mode
-- Each video MUST use its own `frames/pXX/` directory; never share across videos
-- Final frames MUST go to a separate `final/` directory
-- Do NOT use serial `vision_analyze` calls; all vision analysis goes through `score_frames_concurrent.py`
-- Frame directories must be pure English paths
-- Notes should fuse subtitle text with extracted image content, not just summarize subtitles
-- Use `run.bold` and `run.font.color` for emphasis; never use markdown syntax like `**xxx**`
+## Common Pitfalls
 
-## Note Quality Standards
-
-- Write like a top scholar: fuse subtitles and screenshots
-- Prefer completeness over brevity
-- Keep all important details, formulas, definitions, examples, tips
-- Explain WHY, not just WHAT
-- No timestamps
-- Screenshots should only supplement missing exam points, not copy non-essential details
-- When a video mentions external sources (GitHub repo, blog, official site/docs), proactively fetch and supplement authoritative details into the notes: use the GitHub REST API for repos (README + metadata); for blogs/official sites, verify the real URL via search and summarize key points with a source link. Warn the user to enable a proxy/VPN before fetching; if unreachable, only add the link and never block the pipeline.
+- Bilibili HTTP 412 risk-control: bypass with playurl API + `curl --http1.1` (see SKILL.md)
+- Missing/mismatched official AI subtitles: fall back to local ASR (automatic speech recognition) — `scripts/asr_subtitle.py` transcribes the audio with faster-whisper
+- Garbled Chinese in PDF: weasyprint + TTF font (`scripts/gen_full_note.py`)
+- Zhipu API 429: retry with `--workers 2 --resume` lower concurrency
