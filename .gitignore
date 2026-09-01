@@ -4,6 +4,12 @@ bilibili_cookies.txt
 *.key
 *.pem
 
+# 端点本地优化（update_skill.py 自动更新器永不触碰，放心放个性化配置）
+user_config*
+*.local.*
+local_overrides*
+.skill_backup/
+
 # 个人学习出来的黑名单（可脱敏后分享，默认不上传）
 trash_learned.json
 使用说明.md
