@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.0.3
+version: 1.0.4
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima]
 triggers:
@@ -115,10 +115,15 @@ cp bilibili_cookies.txt.example bilibili_cookies.txt
 机制：仓库根目录带 `version.txt` 与 `update_skill.py`。`update_skill.py` 只刷新白名单内的「上游核心文件」（`SKILL.md` / `README.md` / `scripts/*.py` 等），**永远不碰**本地优化文件（`.env`、`bilibili_cookies.txt`、`user_config*`、`*.local.*`、`local_overrides*`、`.skill_backup/`）。覆盖前会把旧文件备份到 `.skill_backup/<时间戳>/`，可随时回滚。国内网络会自动走 `raw.githubusercontent.com` → `ghproxy.net` 镜像兜底。
 
 ```bash
-# 端点加载时建议运行（无网则仅警告，不阻断正常使用）
-python update_skill.py --auto      # 发现新版本 → 备份并刷新上游文件（保留本地优化）
-python update_skill.py --check     # 只报告是否有更新，不修改任何文件
+# 端点应在「每次会话开始 / 加载本 skill 时」自动执行下面这条（无网则仅警告，不阻断正常使用）
+python update_skill.py --auto      # 仅当 GitHub 版本 > 本地才备份并刷新上游文件；本地已最新则什么都不做
+python update_skill.py --check     # 只报告是否有更新，不修改任何文件（适合先观望）
 ```
+
+**怎么做到「加载即触发」**（取决于端点工具是否支持生命周期钩子）：
+- 支持 `onLoad` / 前置钩子的工具：把 `python <本skill目录>/update_skill.py --auto` 挂到 skill 加载事件上，会话一开始就静默保新。
+- 不支持钩子的工具：在系统提示 / 每次对话开头加一句「先运行 `python update_skill.py --auto` 检查并更新本 skill」，AI 会替你执行。
+- 该命令是**幂等且安全的**：远程版本不高于本地时直接跳过；网络不可达时仅打印警告并退出，绝不抛错中断你的正常流程；只有白名单内的上游文件会被刷新，本地优化原样保留。
 
 > **端点本地优化放哪？** 把你的个性化配置 / 微调写进 `.env`、`user_config.md`、`SKILL.local.md` 或任意 `*.local.*` 文件——这些都在 `.gitignore` 与更新器保护名单里，自动更新绝不会覆盖或删除它们。不要直接改 `SKILL.md` 本体来存本地偏好，否则下次更新会被上游版覆盖。
 
