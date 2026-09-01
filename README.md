@@ -70,6 +70,7 @@
 ## ✨ 功能特点
 
 - 🎬 **自动下载** B站视频和官方 AI 字幕
+- 📁 **本地视频支持**：`run_local_pipeline.py` 对本地视频文件做 ASR + 抽帧 + 笔记生成，无需网络
 - 📸 **全覆盖抽帧**（场景切换检测 + 定时抽帧两种模式），不丢任何画面
 - 🔍 **OCR + 感知哈希双重去重**，130 帧 → 30 帧左右，不丢有价值内容
 - 🧠 **AI 视觉打分**，选出每个知识点最完整的一帧
@@ -282,6 +283,26 @@ python run_pipeline.py BV1xx411c7mD --route
 # 一句话指令：（已生成笔记且配置了ima）把这条笔记入库 ima
 python to_ima.py --pdf runs/BV1xx411c7mD_p1/output/视频标题.pdf --route --verify
 ```
+
+### 本地视频
+
+```bash
+# 解释：对本地视频文件做笔记，支持任意格式（mp4/mkv/avi 等）。
+# 一句话指令：帮我总结桌面上这个视频文件
+python run_local_pipeline.py --video /path/to/video.mp4
+
+# 解释：自定义笔记标题（缺省用文件名）。
+# 一句话指令：把这个视频总结成笔记，标题叫"消息队列入门"
+python run_local_pipeline.py --video /path/to/video.mp4 --title "消息队列入门"
+
+# 解释：长视频切块生成（每段约 25 分钟）。
+# 一句话指令：这个视频有点长，切块生成笔记
+python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25
+```
+
+**本地视频流水线**：提取音频 → ASR 语音转文字（faster-whisper）→ 定时抽帧 → OCR 预筛 + 哈希去重 → 视觉打分 → 自动精选 → 提取图中文字 → 生成 MD + PDF →（可选）入 ima。
+
+**与 B 站视频的差异**：不需要 Cookie 和网络连接；字幕通过本地 ASR 生成；默认禁用自进化黑名单避免跨视频误杀；哈希去重阈值 20 保留更多帧。输出在 `runs/local_<标题>_p1/output/` 下。
 
 ---
 
@@ -679,6 +700,7 @@ video-notes-pipeline/
 ├── pyproject.toml         # 项目元数据 / 依赖声明
 ├── SKILL.md / CLAUDE.md / AGENTS.md / CONTRIBUTING.md   # Agent 指令 / 贡献指南
 ├── run_pipeline.py        # 一键流水线入口（--pages / --comments / --no-video / 操作类参数）
+├── run_local_pipeline.py  # 本地视频流水线入口（--video / --title / --segment-minutes）
 ├── md_note.py             # 融合字幕生成 Markdown（学科自适应模板 + 切块生成）
 ├── md2pdf.py              # Markdown -> PDF
 ├── auto_select.py         # 按分数+主题自动精选（含垃圾帧过滤、帧数自适应）

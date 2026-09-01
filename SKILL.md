@@ -1,14 +1,18 @@
 ---
 name: video-notes-pipeline
-version: 1.0.4
+version: 1.1.2
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
-tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima]
+tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
   - bilibili视频笔记
   - 视频笔记
   - 从视频做笔记
   - video notes
   - 把b站视频做成笔记
+  - 本地视频笔记
+  - 本机视频
+  - 视频文件
+  - 本地视频
 ---
 
 # Bilibili Video Notes
@@ -129,6 +133,8 @@ python update_skill.py --check     # 只报告是否有更新，不修改任何�
 
 ## 使用方法
 
+### B 站视频
+
 当用户提供 B 站视频链接并要求做笔记时，直接用 `run_pipeline.py` 一键跑。用户也可只说自然语言（如「帮我总结视频 BVXXXXXX」「这视频有点长，可以选用超出默认上限的截图进笔记」「帮我总结视频 BVXXXXXX 并入库 ima」），由 AI 映射到下方命令，无需记参数。
 
 ```bash
@@ -167,6 +173,35 @@ python run_pipeline.py BV1xx411c7mD --route          # 按内容自动归档到�
 ```
 
 输出在 `runs/<BV>_p<N>/output/`：`*.md`（笔记）、`*.pdf`（供知识库入库）、`images/`（配图）。每分P 含 `result.json` 汇总。
+
+### 本地视频
+
+当用户提供本地视频文件并要求做笔记时，用 `run_local_pipeline.py` 一键跑。用户也可说自然语言（如「帮我总结这个视频文件」「总结一下桌面上这个视频」），由 AI 映射到下方命令。
+
+```bash
+# 基础用法：指定本地视频路径
+python run_local_pipeline.py --video /path/to/video.mp4
+
+# 自定义标题
+python run_local_pipeline.py --video /path/to/video.mp4 --title "自定义标题"
+
+# 长视频切块（每段约 25 分钟）
+python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25
+
+# 生成后归档进 ima 知识库（需配置 .env IMA_KB_ID）
+python run_local_pipeline.py --video /path/to/video.mp4
+```
+
+**本地视频流水线流程**：提取音频 → ASR 语音转文字（faster-whisper）→ 定时抽帧 → OCR 预筛 + 哈希去重 → 视觉打分 → 自动精选 → 提取图中文字 → 生成 MD + PDF →（可选）入 ima。
+
+**与 B 站视频的差异**：
+- 不需要 B 站 Cookie 和网络连接
+- 字幕通过本地 ASR（faster-whisper）生成，无需官方字幕
+- 默认禁用自进化黑名单（`LEARNED_TRASH_FILE=""`），避免跨视频误杀
+- 哈希去重阈值默认 20（`HASH_THRESHOLD=20`），保留更多帧
+- 输出在 `runs/local_<标题>_p1/output/` 下
+
+**依赖**：需要额外安装 `pip install av`（PyAV 用于抽帧），ASR 模型见上方「常见坑与对策 §2」。
 
 ## 笔记写作标准
 

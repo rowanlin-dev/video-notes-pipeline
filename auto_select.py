@@ -139,15 +139,28 @@ def main():
                     help="逗号分隔的垃圾帧黑名单（支持正则），例：白嫖,一键三连,求赞")
     ap.add_argument("--min-score", type=int, default=int(os.getenv("FRAME_MIN_SCORE", "3")),
                     help="入选帧最低 AI 分数")
-    ap.add_argument("--learned-trash", default=os.getenv("LEARNED_TRASH_FILE", ""),
-                    help="自进化黑名单文件路径，默认项目根目录 trash_learned.json")
+    ap.add_argument("--learned-trash", default=os.getenv("LEARNED_TRASH_FILE"),
+                    help="自进化黑名单文件路径，默认项目根目录 trash_learned.json；设空字符串禁用")
     ap.add_argument("--type-trash", default=os.getenv("FRAME_TYPE_TRASH", "meme,blackscreen,ad,face"),
                     help="逗号分隔的低价值 type 类型，默认 meme,blackscreen,ad,face")
     args = ap.parse_args()
 
+    # 处理 --learned-trash：CLI 参数优先于环境变量 LEARNED_TRASH_FILE；
+    # 两者都未指定（args.learned_trash 为 None）→ 用默认黑名单文件；
+    # 显式传空字符串（CLI 或 env）→ 禁用自进化黑名单（避免跨视频误杀）。
+    # 注意：argparse 的 default 已回填 LEARNED_TRASH_FILE 环境变量值，故 args.learned_trash
+    # 已包含「环境变量设定」；此处仅用于把「未指定」与「显式禁用」区分开。
     root = Path(__file__).resolve().parent
-    learned_path = Path(args.learned_trash) if args.learned_trash else root / "trash_learned.json"
-    learned_patterns = load_learned_trash(learned_path)
+    learned_arg = args.learned_trash
+    if learned_arg is None:
+        # CLI 与环境变量都未指定 → 使用项目默认黑名单
+        learned_path = root / "trash_learned.json"
+    elif learned_arg == "":
+        # 显式禁用（CLI 传 "" 或 LEARNED_TRASH_FILE=""）
+        learned_path = None
+    else:
+        learned_path = Path(learned_arg)
+    learned_patterns = load_learned_trash(learned_path) if learned_path else []
 
     patterns = parse_keywords(args.trash_keywords) + learned_patterns
     min_score = args.min_score

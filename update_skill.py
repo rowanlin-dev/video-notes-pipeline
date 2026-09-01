@@ -51,6 +51,7 @@ UPSTREAM_FILES = [
     "setup_windows.bat",
     # 根目录主脚本
     "run_pipeline.py",
+    "run_local_pipeline.py",
     "md2pdf.py",
     "md_note.py",
     "to_ima.py",

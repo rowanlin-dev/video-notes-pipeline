@@ -1,6 +1,8 @@
-# Bilibili Video Notes
+# Bilibili Video Notes (tool entry · v1.1.2)
 
 Turn Bilibili educational videos into illustrated **Markdown + PDF** notes with clickable timestamps, optionally archived into the ima knowledge base.
+
+> Current version **v1.1.2**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
 
 See **SKILL.md** for the full reference. This file is a quick-start for AI agents/collaborators.
 
@@ -67,6 +69,20 @@ python run_pipeline.py BV1xx411c7mD --from-step 4
 ```
 
 Outputs land in `runs/<BV>_p<N>/output/`. More parameters in SKILL.md.
+
+## Local video
+
+When the user provides a **local video file** (not a Bilibili URL) and wants notes, use `run_local_pipeline.py` (no Cookie / network needed):
+
+```bash
+python run_local_pipeline.py --video /path/to/video.mp4
+python run_local_pipeline.py --video /path/to/video.mp4 --title "Custom Title"
+python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25   # long video splitting
+```
+
+Pipeline: extract audio → local ASR (faster-whisper) → interval frames (PyAV) → OCR dedup → vision scoring → auto-select → MD + PDF → (optional) ima.
+Differences from Bilibili: self-evolving blacklist disabled by default, hash-dedup threshold 20, output in `runs/local_<title>_p1/output/`.
+Dep: extra `pip install av`.
 
 ## Common Pitfalls
 

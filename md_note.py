@@ -152,14 +152,18 @@ def parse_subtitle_entries(path):
     return entries
 
 
-def split_segments(entries, duration, seg_min=25, max_seg=12, min_seg=3):
-    """按时长把字幕切成若干段，返回 [(start_sec, end_sec, idx), ...]。"""
+def split_segments(entries, duration, seg_min=25, max_seg=12, min_seg=None):
+    """按时长把字幕切成若干段，返回 [(start_sec, end_sec, idx), ...]。
+    min_seg 默认 = max(1, round(last / (seg_min * 60))) 即不强制小于视频自然分段数，
+    避免短视频被硬切成 3 段。"""
     if not entries:
         return []
     last = entries[-1][0] or (duration or 0)
     if last < 60:
         last = max(last, 60)
     n = max(1, round(last / (seg_min * 60)))
+    if min_seg is None:
+        min_seg = max(1, n)  # 不强制多于自然分段数
     n = min(max(n, min_seg), max_seg)
     bounds = [round(last * i / n) for i in range(n + 1)]
     return [(bounds[i], bounds[i + 1], i + 1) for i in range(n)]

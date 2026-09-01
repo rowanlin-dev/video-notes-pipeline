@@ -1,6 +1,8 @@
-# Bilibili Video Notes
+# Bilibili Video Notes（工具入口 · v1.1.2）
 
 从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
+
+> 当前版本 **v1.1.2**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
 
 完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
@@ -30,6 +32,20 @@ python run_pipeline.py BV1xx411c7mD --from-step 4
 ```
 
 输出在 `runs/<BV>_p<N>/output/`。更多参数见 SKILL.md。
+
+## 本地视频
+
+当用户提供**本地视频文件**（非 B 站链接）并要求做笔记时，用 `run_local_pipeline.py` 一键跑（无需 Cookie / 网络）：
+
+```bash
+python run_local_pipeline.py --video /path/to/video.mp4
+python run_local_pipeline.py --video /path/to/video.mp4 --title "自定义标题"
+python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25   # 长视频切块
+```
+
+流程：提取音频 → 本地 ASR（faster-whisper）转文字 → 定时抽帧（PyAV）→ OCR 去重 → 视觉打分 → 自动精选 → 生成 MD + PDF →（可选）入 ima。
+与 B 站差异：默认禁用自进化黑名单、哈希去重阈值 20、输出在 `runs/local_<标题>_p1/output/`。
+依赖：额外 `pip install av`。
 
 ## 耗时预估
 

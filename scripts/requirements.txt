@@ -1,5 +1,6 @@
 yt-dlp
 imagehash
+av
 rapidocr-onnxruntime
 python-docx
 Pillow

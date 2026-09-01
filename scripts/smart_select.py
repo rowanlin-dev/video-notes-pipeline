@@ -244,8 +244,9 @@ def main():
     parser.add_argument("frames_dir", help="输入帧目录")
     parser.add_argument("--ocr-threshold", type=int, default=20,
                         help="OCR 文字量阈值，低于此值视为无内容（默认 20）")
-    parser.add_argument("--hash-threshold", type=int, default=10,
-                        help="哈希距离阈值，低于此值视为相同帧（默认 10）")
+    parser.add_argument("--hash-threshold", type=int,
+                        default=int(os.getenv("HASH_THRESHOLD", "20")),
+                        help="哈希距离阈值，低于此值视为相同帧（默认 20，可通过 HASH_THRESHOLD 环境变量覆盖）")
     parser.add_argument("--text-threshold", type=float, default=0.7,
                         help="OCR文本相似度阈值，低于此值拆分为不同帧（默认 0.7）")
     parser.add_argument("--skip-clustering", action="store_true",
