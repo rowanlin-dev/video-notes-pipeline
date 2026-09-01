@@ -1,5 +1,6 @@
 ---
 name: video-notes-pipeline
+version: 1.1.0
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima]
 triggers:
@@ -46,19 +47,39 @@ triggers:
 
 **实测样本**：BV1B9TC66EHH（3.6 分钟）→ 约 6 分钟；BV1Wr1uBLEj5（10 分钟）→ 约 12 分钟；BV13z6JYJEd4（33 分钟）→ 约 23 分钟；BV1n7uj6MEyo（8 分钟）→ 约 9 分钟。
 
-## 安装
+## ★ 硬性约束：永远不要「裁剪画面」去字幕
+
+> 截图时若字幕挡住了 PPT 内容，**绝对不能用 ffmpeg `crop` 把画面底部（或任何区域）裁掉来「去掉字幕」**。
+> 原因：① 字幕位置不固定，写死的 crop 区域迟早裁错；② PPT 是全屏，内容也在被裁区域里，一裁就把正文切掉，比字幕遮挡更严重。
+
+正确两条路（都不裁切）：
+- **A. 截图落在「字幕空挡」**：用带时间戳的字幕（官方或 ASR 都带 `from/to`）把截图时刻挪到两句字幕都不在屏上的空挡。
+- **B. 无空挡就接受遮挡**：直接在 PPT 页代表时刻全帧截图，字幕挡住就挡吧——比裁掉内容好。
+
+烧录硬字幕 PPT 视频用 `--slidegap`：把场景阈值从 0.04 提到 ~0.1，字幕闪变分值都 <0.1、真实翻页 ≥0.1，得到干净「一页一帧」，全程无 crop。连续旁白视频字幕首尾相接几乎无空挡时，按 B 接受遮挡即可。
+
+## 安装（首次 / 跨平台，国内镜像兜底）
+
+无论 Windows / macOS / Linux，**是否挂 VPN 都能装**：AI 先探测系统与网络，直连不稳就自动切国内镜像，有代理则直连更快。
 
 ```bash
-git clone https://github.com/rowanlin-dev/video-notes-pipeline.git
-cd video-notes-pipeline
+# 1) 克隆（GitHub 直连不稳时加 ghproxy 前缀）
+git clone https://ghproxy.net/https://github.com/rowanlin-dev/video-notes-pipeline.git
+#   （前缀不通换 https://mirror.ghproxy.com/ 或 https://gitclone.com/github.com/...）
+
+# 2) 装依赖（pip 永久切清华源，避免 PyPI 直连超时）
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 pip install -r scripts/requirements.txt
+
+# 3) ffmpeg（抽帧必需，不依赖 chocolatey）
+#    Windows：下便携版解压到 C:\ffmpeg，pipeline 自动识别 C:\ffmpeg\bin；或 winget install -e --id Gyan.FFmpeg
+#    macOS：brew install ffmpeg   |   Ubuntu/Debian：sudo apt-get install ffmpeg
 ```
 
-系统需安装 `ffmpeg`（抽帧依赖）：
+> 🪟 **Windows 不想敲命令**：直接双击仓库里的 `setup_windows.bat`，自动装 Python、拉仓库、切镜像、装 ffmpeg、预下载 ASR 模型，全程走国内源、零手动。
 
-- Windows：`choco install ffmpeg` 或从 https://ffmpeg.org 下载后把 `bin` 加入 PATH
-- macOS：`brew install ffmpeg`
-- Ubuntu/Debian：`sudo apt-get install ffmpeg`
+> ASR 模型（无官方字幕时兜底，国内用镜像）：
+> `HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small`
 
 ## 配置
 
@@ -89,7 +110,7 @@ cp bilibili_cookies.txt.example bilibili_cookies.txt
 
 ## 使用方法
 
-当用户提供 B 站视频链接并要求做笔记时，直接用 `run_pipeline.py` 一键跑：
+当用户提供 B 站视频链接并要求做笔记时，直接用 `run_pipeline.py` 一键跑。用户也可只说自然语言（如「帮我总结视频 BVXXXXXX」「这视频有点长，可以选用超出默认上限的截图进笔记」「帮我总结视频 BVXXXXXX 并入库 ima」），由 AI 映射到下方命令，无需记参数。
 
 ```bash
 # 单 P / 默认当前 P
@@ -97,6 +118,9 @@ python run_pipeline.py BV1xx411c7mD
 
 # 课件/PPT 类（默认 scene 场景检测即可）
 python run_pipeline.py BV1xx411c7mD --mode fixed --interval 20
+
+# 烧录字幕的 PPT 视频（字幕合成在画面里、无独立字幕轨）：用 slidegap 抽帧，避开字幕遮挡、不裁剪
+python run_pipeline.py BV1xx411c7mD --slidegap
 
 # 操作类视频（PS/剪辑/代码实操）：画面频繁小幅变化，
 # 阈值更低更敏感、合并窗口更短，避免相邻步骤被合并
@@ -138,6 +162,7 @@ python run_pipeline.py BV1xx411c7mD --route          # 按内容自动归档到�
 ## 关键规则
 
 - **抽帧默认 `--mode scene`**（场景切换检测，适合课件/PPT），不要用旧的 `--mode cover` 全覆盖；操作类改用 `--threshold 0.02 --merge-gap 1.5`
+- **烧录硬字幕 PPT 视频用 `--slidegap`**：字幕合成在画面里、无独立字幕轨，抽帧落在翻页空挡、避开字幕遮挡；**禁止用 ffmpeg `crop` 裁掉字幕区域（会一起裁掉内容）**，无空挡就接受遮挡
 - **选帧全自动**：`auto_select.py` 按分数 + 主题多样性精选到 `final/`，无需人工 `cp` 挑选帧
 - **所有视觉分析走 `score_frames_concurrent.py`**（score / extract 两种模式），不要串行逐帧调用
 - **模型分离**：识图用 `VISION_*`，写正文用 `TEXT_*`；长文 / 切块笔记 `TEXT_MODEL` 推荐 `deepseek-chat`（glm-4-flash 长文易截断）
@@ -177,9 +202,9 @@ python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subti
 - **语音转文字(ASR)错词用 deepseek-chat 术语级修正**：`python scripts/fix_subtitles.py <字幕JSON> --video-topic <主题> --extra-terms "poster man→Postman, moke→mock"`（术语表要显式写进 prompt，否则 LLM 保守不改）
 - 修正后 `--from-step 6` 重新生成笔记
 
-### 3. PDF 中文豆腐块（本机无 Chrome/Edge）
+### 3. PDF 中文豆腐块（本机无 Chrome/Edge / 其他无浏览器环境）
 
-md2pdf 默认依赖 Chrome/Edge 渲染。无浏览器时用 weasyprint + TTF 中文字体：
+md2pdf 默认调用系统 Edge/Chrome 渲染（Windows 10 自带 Edge，无需额外装）；无浏览器环境才用 weasyprint + TTF 中文字体兜底（`weasyprint`/`pymupdf` 已移入 `scripts/requirements-optional.txt`，非默认依赖）：
 
 - ⚠️ **必须用 TTF 版字体**（TrueType 轮廓）：OTF(CFF) 版会被 fontconfig 拒加载。可用 `https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf`（约 16MB 可变字体，URL 需编码 `%5B` `%5D`）
 - 生成：`python scripts/gen_full_note.py <笔记.md> [标题] [字体.ttf]`（内部：md_to_html → 注入 `@font-face` → weasyprint `FontConfiguration` 出 PDF）
