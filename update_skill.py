@@ -27,6 +27,7 @@ import fnmatch
 import os
 import re
 import shutil
+import subprocess
 import sys
 import urllib.request
 import urllib.error
@@ -96,15 +97,76 @@ def version_tuple(v):
     return tuple(nums)
 
 
-def _http_get(url, timeout=15):
-    req = urllib.request.Request(url, headers={"User-Agent": "vnp-update-skill/1.1.1"})
-    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-    handlers = []
+# 已验证可用的代理会被缓存，后续请求直接复用，避免每次都逐个探测（国内常见场景）
+_WORKING_PROXY = None
+
+
+def _proxy_candidates():
+    """返回要尝试的代理列表（去重保序）：
+    1) 已验证可用代理（缓存）
+    2) 环境变量代理（若用户显式设置）
+    3) 常见本机代理端口（Clash 7890 / v2ray 7891 / 1087 / 1080 / 8080 等）
+    4) 直连（仅在没有已知可用代理时尝试）
+    """
+    cands = []
+    if _WORKING_PROXY is not None:
+        cands.append(_WORKING_PROXY)
+    env = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    if env:
+        cands.append(env)
+    for port in ("7890", "7891", "7892", "1087", "1080", "8080"):
+        cands.append(f"http://127.0.0.1:{port}")
+    if _WORKING_PROXY is None:
+        cands.append(None)  # 直连兜底
+    seen, out = set(), []
+    for c in cands:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def _curl_get(url, proxy, timeout):
+    """用 curl 取数（代理 / 超时行为比 urllib 通过 CONNECT 代理更可靠）。
+    成功返回文本，失败返回 None。"""
+    cmd = ["curl", "-sSL", "--max-time", str(timeout)]
     if proxy:
-        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-    opener = urllib.request.build_opener(*handlers)
-    with opener.open(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", "replace")
+        cmd += ["-x", proxy]
+    cmd.append(url)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout + 5)
+        if r.returncode == 0 and r.stdout:
+            return r.stdout.decode("utf-8", "replace")
+    except Exception:
+        pass
+    return None
+
+
+def _http_get(url, timeout=15):
+    global _WORKING_PROXY
+    last_err = None
+    have_curl = shutil.which("curl") is not None
+    for proxy in _proxy_candidates():
+        data = None
+        # 优先 curl（更稳），失败再 urllib 兜底
+        if have_curl:
+            data = _curl_get(url, proxy, timeout)
+        if data is None:
+            handlers = []
+            if proxy:
+                handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "vnp-update-skill/1.1.1"})
+                with urllib.request.build_opener(*handlers).open(req, timeout=timeout) as r:
+                    data = r.read().decode("utf-8", "replace")
+            except Exception as e:
+                last_err = e
+                continue
+        if data is not None:
+            if _WORKING_PROXY is None and proxy is not None:
+                _WORKING_PROXY = proxy  # 缓存成功代理
+            return data
+    raise last_err or RuntimeError("all fetch attempts failed")
 
 
 def remote_version():
