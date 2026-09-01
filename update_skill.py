@@ -38,27 +38,42 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # 允许被更新的「上游核心文件」白名单。
 # 新增需要分发的文件时，请同步加到这里（避免误删 / 误覆盖本地文件）。
+# 注意：路径必须与 GitHub 仓库实际结构一致——主脚本在仓库根目录，
+# 工具模块在 scripts/ 下；weasyprint_pdf.py 是纯本地文件（未上库），不在此列。
 UPSTREAM_FILES = [
+    # 根目录文档与入口
     "SKILL.md",
     "README.md",
     "AGENTS.md",
     "CLAUDE.md",
-    "requirements.txt",
-    "requirements-optional.txt",
+    "version.txt",
+    "update_skill.py",
     "setup_windows.bat",
-    "scripts/run_pipeline.py",
-    "scripts/extract_frames.py",
-    "scripts/smart_select.py",
-    "scripts/score_frames_concurrent.py",
-    "scripts/auto_select.py",
-    "scripts/md_note.py",
-    "scripts/md2pdf.py",
+    # 根目录主脚本
+    "run_pipeline.py",
+    "md2pdf.py",
+    "md_note.py",
+    "to_ima.py",
+    "auto_select.py",
+    "learn_trash.py",
+    "set_cookie.py",
+    "templates/docx_note_v2.py",
+    # scripts/ 工具模块（真实路径）
+    "scripts/requirements.txt",
+    "scripts/requirements-optional.txt",
+    "scripts/apply_subtitles.py",
     "scripts/asr_subtitle.py",
+    "scripts/clean_markdown_bold.py",
+    "scripts/extract_frames.py",
+    "scripts/extract_key_sentences.py",
+    "scripts/fetch_comments.py",
     "scripts/fix_subtitles.py",
     "scripts/gen_full_note.py",
-    "scripts/to_ima.py",
-    "scripts/learn_trash.py",
-    "scripts/set_cookie.py",
+    "scripts/note_subject.py",
+    "scripts/score_frames_concurrent.py",
+    "scripts/smart_select.py",
+    "scripts/verify_checklist.py",
+    "scripts/verify_docx.py",
     "scripts/weasyprint_pdf.py",
 ]
 
@@ -156,7 +171,7 @@ def _http_get(url, timeout=15):
             if proxy:
                 handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "vnp-update-skill/1.1.1"})
+                req = urllib.request.Request(url, headers={"User-Agent": "vnp-update-skill/1.0.3"})
                 with urllib.request.build_opener(*handlers).open(req, timeout=timeout) as r:
                     data = r.read().decode("utf-8", "replace")
             except Exception as e:
