@@ -108,12 +108,9 @@ def main():
     env["LEARNED_TRASH_FILE"] = ""       # 本地视频禁用自进化黑名单，避免跨视频误杀
     env["HASH_THRESHOLD"] = "20"         # 适当提高哈希去重阈值，保留更多帧
 
-    # 复制视频到工作目录
-    video_ws = run_dir / f"{bvid}_p{page}.mp4"
-    if not video_ws.exists():
-        shutil.copy2(str(video_path), str(video_ws))
-        print(f"[pipeline] 视频已复制到工作目录：{video_ws}")
-
+    # 本地视频直接使用原始文件，不再复制到工作目录
+    # （避免大文件二次占用磁盘空间与拷贝耗时；源文件不会被修改，可安全直读）
+    video_ws = video_path
     duration = get_video_duration(str(video_ws))
     print(f"[pipeline] 视频时长：{duration:.0f}s ({duration/60:.1f}min)")
     print(f"[pipeline] 标题：{title}")
@@ -173,8 +170,14 @@ def main():
                     seek_ts = int(ts / stream.time_base)
                 else:
                     seek_ts = int(ts * 1_000_000)
+                # seek 到最近的关键帧（默认 seek 到 PTS >= seek_ts 的关键帧）
                 container.seek(seek_ts, stream=stream)
+                # 关键帧可能远早于目标时间戳（尤其屏幕录制视频 GOP 很长），
+                # 需要继续解码直到到达目标时间戳，否则所有帧都取到同一个关键帧。
                 for frame in container.decode(video=0):
+                    # frame.time 是帧的显示时间（秒），尚未到达目标则跳过继续解码
+                    if frame.time is not None and frame.time < ts - 0.05:
+                        continue
                     img = frame.to_image()
                     out = scene_dir / f"frame_{fc+1:04d}_{ts//60:02d}m{ts%60:02d}s.jpg"
                     img.save(str(out), "JPEG", quality=85)
