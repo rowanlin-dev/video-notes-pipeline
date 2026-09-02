@@ -1,8 +1,8 @@
-# Bilibili Video Notes（工具入口 · v1.1.3）
+# Bilibili Video Notes（工具入口 · v1.1.4）
 
 从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
 
-> 当前版本 **v1.1.3**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
+> 当前版本 **v1.1.4**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
 
 完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
@@ -46,6 +46,10 @@ python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25   #
 流程：提取音频 → 本地 ASR（faster-whisper）转文字 → 定时抽帧（PyAV）→ OCR 去重 → 视觉打分 → 自动精选 → 生成 MD + PDF →（可选）入 ima。
 与 B 站差异：默认禁用自进化黑名单、哈希去重阈值 20、输出在 `runs/local_<标题>_p1/output/`。
 依赖：额外 `pip install av`。
+
+## Agent 原生模式（免外部 LLM）
+
+若宿主 Agent 自带模型，可省掉 skill 内置 LLM：在命令后加 `--emit-brief`，脚本导出 `output/_brief.md`（素材 + 写作规范）后停下；Agent 按简报写 `note.md`，再 `python md2pdf.py --input <note.md>` 渲染。无需 `TEXT_API_KEY`。默认行为不变。详见 SKILL.md。
 
 ## 耗时预估
 

@@ -332,7 +332,34 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
                     "--max-segments", str(args.max_segments)]
         if sub_txt.exists():
             cmd += ["--subtitle", sub_txt]
-        run(cmd, env=env, step=f"Step 6/7  [P{page}] 融合字幕生成 Markdown 笔记")
+        # Agent 原生模式：把评论区一并写入简报，由宿主 Agent 撰写时参考
+        if args.emit_brief:
+            cmd += ["--emit-brief"]
+            if comment_block:
+                cb_path = run_dir / "_comments_block.txt"
+                cb_path.write_text(comment_block, encoding="utf-8")
+                cmd += ["--comment-block", str(cb_path)]
+        run(cmd, env=env, step=f"Step 6/7  [P{page}] " +
+            ("导出 Agent 原生模式简报" if args.emit_brief else "融合字幕生成 Markdown 笔记"))
+
+        # Agent 原生模式：导出简报后停止，由宿主 Agent 自带模型撰写笔记
+        if args.emit_brief:
+            brief = note_md.with_name("_brief.md")
+            print(f"\n{'=' * 62}")
+            print(f"[Agent 模式] 已导出简报：{brief}")
+            print(f"  请宿主 Agent 按简报撰写 {note_md}（含图文穿插），再运行：")
+            print(f"    python md2pdf.py --input {note_md}")
+            print(f"{'=' * 62}")
+            json.dump({"bvid": bvid, "page": page, "title": title,
+                       "agent_mode": True, "brief": str(brief),
+                       "markdown": str(note_md), "pdf": None,
+                       "images_dir": str(img_dir), "ima_status": "skipped",
+                       "comments": args.comments, "comments_appended": False,
+                       "raw_frames": n_raw, "selected": n_sel,
+                       "final": len(list(final_dir.glob("*.jpg")))},
+                      open(run_dir / "result.json", "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=2)
+            return
 
         # 评论区区块：追加进笔记（在转 PDF 之前，保证 PDF 含评论）
         if comment_block:
@@ -431,6 +458,8 @@ def main():
                     help="长视频切块最大段数（默认 12）")
     ap.add_argument("--title", default=None, help="手动指定标题，跳过 API 获取")
     ap.add_argument("--no-ima", action="store_true", help="跳过上传到 ima 知识库")
+    ap.add_argument("--emit-brief", action="store_true",
+                    help="Agent 原生模式：生成笔记简报后停止，由宿主 Agent 自带模型撰写笔记")
     ap.add_argument("--comments", choices=["off", "list", "top", "summary"], default="off",
                     help="评论区（默认 off；学习类价值低，社会/哲学类才有参考意义）："
                          "list=评论列表 / top=高赞评论 / summary=情绪趋势+精选（LLM）")

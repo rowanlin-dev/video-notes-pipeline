@@ -92,7 +92,8 @@ def load_frames(final_dir, origin_map_path, extract_json, scores_json, interval,
     for img in sorted(Path(final_dir).glob("*.jpg"), key=lambda p: frame_index(p.name)):
         name = img.name
         idx = frame_index(name)
-        sec = parse_ts(origin_map.get(name, ""), idx, interval)
+        # 优先用 origin_map 还原的原始帧名（含时间戳）；缺失时退回用本帧文件名自身解析
+        sec = parse_ts(origin_map.get(name, name), idx, interval)
         info = extracted.get(name, {}) or {}
         sinfo = scores.get(name, {}) or {}
         frames.append({
@@ -266,6 +267,185 @@ def build_overview_prompt(title, label, seg_summaries):
         f"【学科】{label}\n\n"
         "各时间段小结：\n" + lines + "\n"
     )
+
+
+def _is_local_bvid(bvid: str) -> bool:
+    return bool(bvid) and bvid.startswith("local_")
+
+
+def _brief_frames_list(frames, bvid):
+    """把帧信息压成简报用的精简结构（含跳转链接，本地视频无链接）。"""
+    is_loc = _is_local_bvid(bvid)
+    out = []
+    for f in frames:
+        out.append({
+            "file": f["file"],
+            "timestamp": f["timestamp"],
+            "jump_url": "" if is_loc else f.get("url", ""),
+            "theme": f["theme"],
+            "keywords": f["keywords"],
+            "content": f["content"],
+        })
+    return out
+
+
+def emit_brief(title, bvid, page, frames, subtitle, template, target,
+               entries, segs, args):
+    """Agent 原生模式：把笔记生成所需的全部素材 + 写作 SPEC 导出为
+    _brief.md（人/Agent 可读）与 _brief.json（结构化），供宿主 Agent 自带模型
+    撰写笔记，全程不调用外部 LLM。返回 (brief_md, brief_json) 路径。"""
+    out = Path(args.output).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    brief_md = out.with_name("_brief.md")
+    brief_json = out.with_name("_brief.json")
+    is_loc = _is_local_bvid(bvid)
+
+    comment_text = ""
+    if args.comment_block and Path(args.comment_block).exists():
+        comment_text = Path(args.comment_block).read_text(
+            encoding="utf-8", errors="ignore").strip()
+
+    payload = {
+        "schema": "video-notes-pipeline/brief@1",
+        "mode": "agent-native",
+        "title": title,
+        "bvid": bvid,
+        "page": page,
+        "is_local": is_loc,
+        "subject_label": template.get("label"),
+        "target_chars": target,
+        "img_prefix": args.img_prefix,
+        "output": str(out),
+        "outline": template.get("outline", []),
+        "guidance": template.get("guidance", ""),
+        "frames": _brief_frames_list(frames, bvid),
+        "subtitle": subtitle,
+        "comment_block": comment_text,
+        "chunked": len(segs) > 1,
+    }
+    if len(segs) > 1:
+        seg_payload = []
+        for (s0, s1, idx) in segs:
+            seg_entries = [(sec, t) for (sec, t) in entries if s0 <= sec < s1]
+            seg_sub = "\n".join(f"[{fmt_ts(sec)}] {t}" for sec, t in seg_entries)
+            seg_frames = [f for f in frames if s0 <= f["seconds"] < s1]
+            weight = len(seg_entries) / (len(entries) or 1)
+            seg_target = max(600, int(target * weight))
+            seg_payload.append({
+                "index": idx,
+                "start": fmt_ts(s0), "end": fmt_ts(s1),
+                "subtitle": seg_sub or "（本段无字幕，请仅依据截图信息撰写）",
+                "frames": _brief_frames_list(seg_frames, bvid),
+                "target_chars": seg_target,
+            })
+        payload["segments"] = seg_payload
+
+    brief_json.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    brief_md.write_text(_render_brief_md(payload), encoding="utf-8")
+    return brief_md, brief_json
+
+
+def _render_brief_md(p):
+    is_loc = p["is_local"]
+    n_img = len(p["frames"])
+    L = []
+    L.append("# 视频笔记生成简报（Agent 原生模式）")
+    L.append("")
+    L.append("> 本简报由 `video-notes-pipeline` 生成。**宿主 Agent 请用自身模型**按下方"
+             "【写作 SPEC】撰写 Markdown 笔记，全程无需任何外部 LLM API Key。")
+    L.append(">")
+    L.append("> 撰写完成后：")
+    L.append(f"> 1. 把笔记写入 `{p['output']}`")
+    L.append(f"> 2. 运行 `python md2pdf.py --input \"{p['output']}\"` 渲染 PDF")
+    L.append("")
+    L.append("## 基本信息")
+    L.append(f"- 视频标题：{p['title']}")
+    if is_loc:
+        L.append("- 来源：本地视频（无在线跳转链接）")
+    else:
+        L.append(f"- 来源：B站 `{p['bvid']}` · 分P {p['page']}")
+    L.append(f"- 学科归类：{p['subject_label']}")
+    L.append(f"- 目标字数：约 **{p['target_chars']}** 字（允许 ±15% 浮动）")
+    L.append(f"- 配图相对目录（相对本笔记）：`{p['img_prefix']}/`")
+    L.append(f"- 输出文件：`{p['output']}`")
+    L.append(f"- 配图数量：{n_img} 张")
+    L.append("")
+    L.append("## 写作 SPEC（必须遵循）")
+    L.append("")
+    L.append("1. **文件开头**：先写一级标题 `# {标题}`，紧接着一行来源说明，再 `---` 分隔线，然后是正文。来源说明格式：")
+    if is_loc:
+        L.append(f"   `> 来源：本地视频 · 共 {n_img} 张图解`")
+    else:
+        L.append(f"   `> 来源：[{p['bvid']}](https://www.bilibili.com/video/{p['bvid']}/?p={p['page']}) · P{p['page']} · 共 {n_img} 张图解`")
+    outline = p.get("outline") or ["内容概要", "核心内容", "核心要点回顾"]
+    L.append("2. **结构要求**：严格按下面小节组织，每节一个 `##` 标题，顺序保持一致：")
+    L.append("   " + " / ".join(outline))
+    if p["chunked"]:
+        L.append("   （长视频分块模式：最前面写一节 `## 内容概要` 概括全局；之后每个时间段各写一节"
+                 " `## 第N段（起-止）`，内部用 `###` 小节。各时间段的素材见文末【分段时间线素材】。）")
+    L.append("3. **图文穿插**（本视频有配图时）：每张截图在正文中它对应的内容处**单独一行**插入：")
+    L.append("   `![图 N {主题}]({img_prefix}/{文件名})`")
+    if not is_loc:
+        L.append("   图片下方再单独一行加居中跳转链接（N 与上方一致）：")
+        L.append("   `<div align=\"center\">图 N {主题} — <a href=\"{跳转链接}\" target=\"_blank\" rel=\"noopener noreferrer\">▶ {时间点}</a></div>`")
+    L.append("   - 每张图**恰好插入一次**，分散在正文各处，严禁堆在文末。")
+    L.append("   - 图号 N 按插入顺序从 1 递增（`图 1`、`图 2`…）。")
+    L.append("   - 若截图/字幕里是流程图、架构图、公式、代码或操作步骤，正文要用文字把逻辑讲清，让人不看图也懂。")
+    if not p["frames"]:
+        L.append("   （本视频无配图，忽略本条，写纯文字笔记。）")
+    L.append("4. **学科专属要求**：" + (p.get("guidance") or "用通俗语言讲清机制，突出可迁移结论。"))
+    L.append("5. **通用要求**：")
+    L.append("   - 用 Markdown 输出，从 `##` 级标题开始（不写多余一级标题，不用代码块包裹整篇）。")
+    L.append("   - 正文按知识点分节，逻辑连贯、有信息密度，避免复述口语。")
+    L.append("   - 不出现「本视频」「UP主」「这个视频」之类口语，直接讲内容本身。")
+    L.append("   - 全文简体中文。")
+    L.append(f"6. **字数控制**：本笔记目标约 **{p['target_chars']}** 字（允许 ±15%）。信息密度优先——既不要注水凑字数，也不要过简漏掉关键论证。")
+    L.append("")
+
+    if p["frames"]:
+        L.append("## 关键截图（已按时间排序，供图文穿插引用）")
+        L.append("")
+        L.append("| 图号 | 文件名 | 时间点 | 跳转链接 | 主题 | 关键词 | 图中文字 |")
+        L.append("| --- | --- | --- | --- | --- | --- | --- |")
+        for i, f in enumerate(p["frames"], 1):
+            link = f["jump_url"] or "（本地视频无链接）"
+            kw = ", ".join(map(str, f["keywords"])) if f["keywords"] else ""
+            content = (f["content"] or "").replace("\n", " ")[:400]
+            L.append(f"| {i} | `{f['file']}` | {f['timestamp']} | {link} | {f['theme'] or '截图'} | {kw} | {content} |")
+        L.append("")
+
+    if p.get("chunked") and p.get("segments"):
+        L.append("## 分段时间线素材")
+        L.append("")
+        L.append("请按下列时间段分别撰写 `## 第N段（起-止）` 章节（内部 `###` 小节），最后用一次轻量合成写最前的 `## 内容概要`。")
+        L.append("")
+        for seg in p["segments"]:
+            L.append(f"### 第{seg['index']}段（{seg['start']}–{seg['end']}）目标约 {seg['target_chars']} 字")
+            L.append("")
+            if seg["frames"]:
+                L.append("本段截图（按时间排序）：")
+                for f in seg["frames"]:
+                    extra = f"；图中文字：{f['content'][:300]}" if f["content"] else ""
+                    L.append(f"- `{f['file']}` @ {f['timestamp']} — {f['theme'] or '截图'}{extra}")
+                L.append("")
+            L.append("本段字幕：")
+            L.append("")
+            L.append(seg["subtitle"])
+            L.append("")
+
+    L.append("## 字幕全文")
+    L.append("")
+    L.append(p["subtitle"] or "（无字幕）")
+    L.append("")
+
+    if p.get("comment_block"):
+        L.append("## 评论区参考（可选，社会/哲学类才有价值；学习类可忽略）")
+        L.append("")
+        L.append(p["comment_block"])
+        L.append("")
+
+    return "\n".join(L) + "\n"
 
 
 def generate_chunked(title, entries, frames, segs, template, target,
@@ -517,6 +697,11 @@ def main():
     ap.add_argument("--base-url", default=os.getenv("TEXT_BASE_URL")
                     or os.getenv("VISION_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"))
     ap.add_argument("--model", default=os.getenv("TEXT_MODEL", "glm-4-flash"))
+    ap.add_argument("--emit-brief", action="store_true",
+                    help="Agent 原生模式：导出笔记生成简报(_brief.md/_brief.json)后退出，"
+                         "由宿主 Agent 自带模型按简报撰写笔记，不走外部 LLM（省 API Key/账单）")
+    ap.add_argument("--comment-block", default=None,
+                    help="可选：评论区格式化文本文件路径，写入简报供 Agent 参考")
     args = ap.parse_args()
 
     frames = load_frames(args.final_dir, args.origin_map, args.extract_json,
@@ -543,14 +728,27 @@ def main():
                "favorite": args.stat_favorite})
     print(f"[md] 学科：{subject}（{template.get('label')}）  目标字数：{target}")
 
-    if not args.api_key:
-        print("[error] 缺少 API Key（设置 TEXT_API_KEY 或 VISION_API_KEY）", file=sys.stderr)
-        sys.exit(1)
-
-    # 长视频切块：解析字幕时间戳，分段生成，避免一次性塞爆上下文
+    # 长视频切块：解析字幕时间戳（emit 模式也需要，用于分块简报）
     entries = parse_subtitle_entries(args.subtitle)
     segs = (split_segments(entries, args.duration, args.segment_minutes, args.max_segments)
             if (args.segment_minutes or 0) > 1 else [])
+
+    # Agent 原生模式：导出简报，由宿主 Agent 自带模型撰写笔记（不走外部 LLM）
+    if args.emit_brief:
+        brief_md, brief_json = emit_brief(
+            title=title, bvid=args.bvid, page=args.page, frames=frames,
+            subtitle=subtitle, template=template, target=target,
+            entries=entries, segs=segs, args=args)
+        print(f"[brief] 已导出 Agent 原生模式简报：{brief_md}")
+        print(f"[brief] 请宿主 Agent 按简报撰写 {args.output}，再运行 "
+              f"`python md2pdf.py --input {args.output}`")
+        return
+
+    if not args.api_key:
+        print("[error] 缺少 API Key（设置 TEXT_API_KEY 或 VISION_API_KEY；"
+              "或改用 --emit-brief 交给宿主 Agent 模型）", file=sys.stderr)
+        sys.exit(1)
+
     if len(segs) > 1:
         print(f"[md] 长视频切块模式：{len(segs)} 段（每段约 {args.segment_minutes} 分钟）")
         body = generate_chunked(title, entries, frames, segs, template, target,

@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.1.3
+version: 1.1.4
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
@@ -202,6 +202,29 @@ python run_local_pipeline.py --video /path/to/video.mp4
 - 输出在 `runs/local_<标题>_p1/output/` 下
 
 **依赖**：需要额外安装 `pip install av`（PyAV 用于抽帧），ASR 模型见上方「常见坑与对策 §2」。
+
+## Agent 原生模式（无需外部 LLM，省 Key / 账单）
+
+如果 skill 运行在**自带模型的 Agent 工具**里，可以让 Agent 自己的模型来写笔记正文，而**不调用 skill 内置的外部 LLM**（DeepSeek / GLM）。好处：① 不必配 `TEXT_API_KEY`；② Agent 可能更懂你的上下文；③ 全程一个推理上下文，连贯性更好。
+
+> 代价说明：DeepSeek 本身极便宜（20 分钟视频笔记≈8k token，不到 1 分钱）；若宿主 Agent 也是**按 token 计费**（非订阅制），只是把成本从 DeepSeek 账单挪到 Agent 账单，字幕还会在 Agent 上下文滞留整轮。所以本模式最划算的前提是 Agent 模型已是「包月/已付费」。视觉打分（Step 3 / 5）仍走 `VISION_*`，不在本模式范围内。
+
+用法：在流水线命令后加 `--emit-brief`，脚本会跑完「采集素材 + 拼写作 SPEC」，在 `output/_brief.md`（结构化版 `_brief.json`）停下并退出，**不调外部 LLM**。宿主 Agent 读简报写出 `note.md`，再 `md2pdf.py` 渲染。
+
+```bash
+# B 站视频：导出简报后停，由 Agent 自带模型写笔记
+python run_pipeline.py BV1xx411c7mD --emit-brief
+# 本地视频
+python run_local_pipeline.py --video /path/to/video.mp4 --emit-brief
+```
+
+简报含：基本信息（标题 / 学科 / 目标字数 / 配图目录）、**写作 SPEC**（结构、图文穿插格式、可点击时间戳链接写法、字数控制）、按时间排序的截图清单（文件名 / 时间点 / 跳转链接 / 主题 / 图中文字）、字幕全文；长视频还会按时间段切片给分块素材。Agent 按 SPEC 把笔记写入 `output/note.md`（图片用 `![图 N 主题](images/文件名.jpg)`，B 站图下方加居中时间戳跳转链接），然后：
+
+```bash
+python md2pdf.py --input runs/<BV>_p<N>/output/note.md
+```
+
+默认行为（带 `TEXT_API_KEY` 时）完全不变，向后兼容。
 
 ## 笔记写作标准
 

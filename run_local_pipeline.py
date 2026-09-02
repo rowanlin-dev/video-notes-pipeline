@@ -79,6 +79,8 @@ def main():
                     help="长视频切块：每段约多少分钟（<=1 关闭切块，默认关闭）")
     ap.add_argument("--max-segments", type=int, default=12, help="长视频切块最大段数")
     ap.add_argument("--no-ima", action="store_true", help="跳过上传到 ima 知识库")
+    ap.add_argument("--emit-brief", action="store_true",
+                    help="Agent 原生模式：生成笔记简报后停止，由宿主 Agent 自带模型撰写笔记")
     ap.add_argument("--from-step", type=int, default=1, help="从第几步开始")
     args = ap.parse_args()
 
@@ -260,7 +262,20 @@ def main():
                     "--max-segments", str(args.max_segments)]
         if sub_txt.exists():
             cmd += ["--subtitle", sub_txt]
-        run(cmd, env=env, step="Step 6/6  融合字幕生成 Markdown 笔记")
+        if args.emit_brief:
+            cmd += ["--emit-brief"]
+        run(cmd, env=env, step="Step 6/6  导出 Agent 原生模式简报" if args.emit_brief
+             else "Step 6/6  融合字幕生成 Markdown 笔记")
+
+        # Agent 原生模式：导出简报后停止，由宿主 Agent 自带模型撰写笔记
+        if args.emit_brief:
+            brief = note_md.with_name("_brief.md")
+            print(f"\n{'=' * 62}")
+            print(f"[Agent 模式] 已导出简报：{brief}")
+            print(f"  请宿主 Agent 按简报撰写 {note_md}（含图文穿插），再运行：")
+            print(f"    python md2pdf.py --input {note_md}")
+            print(f"{'=' * 62}")
+            return  # 跳过 PDF 与 ima 上传，交由 Agent 完成笔记
 
         # 生成 PDF
         run([PY, ROOT / "md2pdf.py", "--input", note_md],

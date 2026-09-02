@@ -1,8 +1,8 @@
-# Bilibili Video Notes (tool entry · v1.1.3)
+# Bilibili Video Notes (tool entry · v1.1.4)
 
 Turn Bilibili educational videos into illustrated **Markdown + PDF** notes with clickable timestamps, optionally archived into the ima knowledge base.
 
-> Current version **v1.1.3**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
+> Current version **v1.1.4**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
 
 See **SKILL.md** for the full reference. This file is a quick-start for AI agents/collaborators.
 
@@ -83,6 +83,10 @@ python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25   #
 Pipeline: extract audio → local ASR (faster-whisper) → interval frames (PyAV) → OCR dedup → vision scoring → auto-select → MD + PDF → (optional) ima.
 Differences from Bilibili: self-evolving blacklist disabled by default, hash-dedup threshold 20, output in `runs/local_<title>_p1/output/`.
 Dep: extra `pip install av`.
+
+## Agent-native mode (no external LLM)
+
+If the host Agent has its own model, skip the skill's built-in LLM: add `--emit-brief` to the command; the script exports `output/_brief.md` (materials + writing spec) and stops. The Agent writes `note.md` per the brief, then `python md2pdf.py --input <note.md>` renders it. No `TEXT_API_KEY` needed. Default behavior unchanged. See SKILL.md.
 
 ## Common Pitfalls
 
