@@ -66,6 +66,22 @@ def get_video_duration(video_path: str) -> float:
     return float(r.stdout.strip())
 
 
+def _resolve_full_ffmpeg():
+    """定位 WinGet 安装的「完整版」Gyan.FFmpeg（TRAE 等 IDE 自带精简版缺音频编码器）。
+
+    用 glob 适配版本目录名（ffmpeg-8.0-full_build 等会变），找到返回其 bin 目录；
+    否则返回 None（调用方回退到 PATH 上的 ffmpeg），保证 Mac/Linux 与未装完整版的
+    Windows 也能正常抽取音频。
+    """
+    pkgs = Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
+    if pkgs.is_dir():
+        matches = sorted(pkgs.glob("Gyan.FFmpeg_*/ffmpeg-*-full_build/bin"), reverse=True)
+        for d in matches:
+            if (d / "ffmpeg.exe").exists():
+                return d
+    return None
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="本机视频转图文笔记流水线")
@@ -104,10 +120,15 @@ def main():
         d.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
-    # 优先使用完整版 ffmpeg（WinGet 安装的 Gyan.FFmpeg），TRAE 自带精简版缺少音频编码器
-    full_ffmpeg_dir = Path(r"C:\Users\12629\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0-full_build\bin")
-    env["PATH"] = str(full_ffmpeg_dir) + os.pathsep + env.get("PATH", "")
-    ffmpeg_bin = str(full_ffmpeg_dir / "ffmpeg.exe")
+    # 优先使用 WinGet 安装的「完整版」Gyan.FFmpeg（TRAE 等 IDE 自带精简版缺音频编码器）。
+    # 找不到则回退 PATH 上的 ffmpeg（Windows/Mac/Linux 通用），不在别的机器上崩。
+    full_ffmpeg_dir = _resolve_full_ffmpeg()
+    if full_ffmpeg_dir is not None:
+        env["PATH"] = str(full_ffmpeg_dir) + os.pathsep + env.get("PATH", "")
+        ffmpeg_bin = str(full_ffmpeg_dir / "ffmpeg.exe")
+        print(f"[pipeline] 使用完整版 ffmpeg：{ffmpeg_bin}")
+    else:
+        ffmpeg_bin = "ffmpeg"   # 回退 PATH（Windows/Mac/Linux 通用）
     env["BILI_NOTES_WORKSPACE"] = str(run_dir)
     env["BILI_NOTES_FRAMES"] = str(run_dir)
     env["PYTHONIOENCODING"] = "utf-8"
