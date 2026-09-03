@@ -45,7 +45,7 @@ blockquote {
   margin: 10px 0; padding: 8px 14px; background: #f5f7fa;
   border-left: 3px solid #b8c4d4; color: #555; font-size: 10.5pt;
 }
-img { display: inline-block; border: 1px solid #ddd; border-radius: 3px; }
+img { max-width: 100%; display: inline-block; border: 1px solid #ddd; border-radius: 3px; }
 .img-wrap { text-align: center; margin: 12px auto 4px; }
 .img-portrait img { max-width: 55%; }
 .img-square img { max-width: 75%; }
