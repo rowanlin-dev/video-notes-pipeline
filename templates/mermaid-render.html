@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Mermaid 浏览器渲染器</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; max-width: 960px; margin: 20px auto; padding: 0 16px; }
+  h1 { font-size: 18px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  .controls { margin: 12px 0; display: flex; gap: 8px; flex-wrap: wrap; }
+  button, select { padding: 6px 14px; font-size: 14px; cursor: pointer; }
+  .diagram { margin: 20px 0; padding: 16px; border: 1px solid #ddd; border-radius: 4px; }
+  .diagram-title { font-weight: bold; margin-bottom: 8px; }
+  .diagram svg { max-width: 100%; height: auto; }
+  .error { color: #c00; padding: 8px; background: #fee; border-radius: 4px; }
+  #status { color: #666; margin: 8px 0; }
+</style>
+</head>
+<body>
+<h1>Mermaid 浏览器渲染器</h1>
+<p>从 <code>.mmd</code> 文件加载 Mermaid 图渲染为 SVG，右键可保存。</p>
+
+<div class="controls">
+  <button id="btn-load">加载 .mmd 文件</button>
+  <button id="btn-render-all">渲染全部</button>
+  <button id="btn-export-all">导出全部 SVG</button>
+  <span id="status">就绪</span>
+</div>
+
+<div id="container"></div>
+
+<script>
+let mermaidFiles = [];
+let diagrams = [];
+
+mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose" });
+
+document.getElementById("btn-load").addEventListener("click", async () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+  input.accept = ".mmd";
+  input.onchange = async (e) => {
+    mermaidFiles = Array.from(e.target.files);
+    document.getElementById("container").innerHTML = "";
+    document.getElementById("status").textContent = `已加载 ${mermaidFiles.length} 个文件`;
+    for (const file of mermaidFiles) {
+      const div = document.createElement("div");
+      div.className = "diagram";
+      div.innerHTML = `<div class="diagram-title">${file.name}</div><div class="mermaid-content" data-name="${file.name}">加载中...</div>`;
+      document.getElementById("container").appendChild(div);
+    }
+  };
+  input.click();
+});
+
+document.getElementById("btn-render-all").addEventListener("click", async () => {
+  const status = document.getElementById("status");
+  status.textContent = "渲染中...";
+  let ok = 0;
+  diagrams = [];
+
+  for (const file of mermaidFiles) {
+    const text = await file.text();
+    const container = document.querySelector(`.mermaid-content[data-name="${file.name}"]`);
+    if (!container) continue;
+
+    container.innerHTML = "";
+    const id = "mermaid-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+
+    try {
+      const { svg } = await mermaid.render(id, text);
+      container.innerHTML = svg;
+      diagrams.push({ name: file.name, svg });
+      ok++;
+    } catch (err) {
+      container.innerHTML = `<div class="error">渲染失败: ${err.message}</div>`;
+    }
+  }
+
+  status.textContent = `渲染完成: ${ok}/${mermaidFiles.length}`;
+});
+
+document.getElementById("btn-export-all").addEventListener("click", () => {
+  if (diagrams.length === 0) {
+    alert("请先渲染图表");
+    return;
+  }
+
+  for (const d of diagrams) {
+    const svgName = d.name.replace(/\.mmd$/i, "") + ".svg";
+    const blob = new Blob([d.svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = svgName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+});
+</script>
+</body>
+</html>

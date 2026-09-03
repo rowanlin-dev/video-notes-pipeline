@@ -45,7 +45,11 @@ blockquote {
   margin: 10px 0; padding: 8px 14px; background: #f5f7fa;
   border-left: 3px solid #b8c4d4; color: #555; font-size: 10.5pt;
 }
-img { max-width: 100%; display: block; margin: 12px auto 4px; border: 1px solid #ddd; border-radius: 3px; }
+img { display: inline-block; border: 1px solid #ddd; border-radius: 3px; }
+.img-wrap { text-align: center; margin: 12px auto 4px; }
+.img-portrait img { max-width: 55%; }
+.img-square img { max-width: 75%; }
+.img-landscape img { max-width: 100%; }
 div[align="center"] { text-align: center; font-size: 9.5pt; color: #666; margin-bottom: 16px; }
 a { color: #4a6fa5; text-decoration: none; }
 code { background: #f2f2f2; padding: 1px 5px; border-radius: 3px; font-size: 10pt; }
@@ -71,6 +75,42 @@ def find_browser():
     return None
 
 
+def _parse_viewbox(svg_text: str):
+    m = re.search(r'viewBox="([^"]+)"', svg_text)
+    if not m:
+        return None
+    parts = m.group(1).strip().split()
+    if len(parts) != 4:
+        return None
+    return float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+
+
+def _classify_svg_images(html: str, base_dir: Path) -> str:
+    """对 SVG 图片按宽高比分类，加外层 div 和 CSS 类"""
+    def _wrap(m):
+        src = m.group(1)
+        img_tag = m.group(0)
+        svg_path = base_dir / src
+        if not svg_path.exists():
+            return img_tag
+        svg_text = svg_path.read_text(encoding="utf-8")
+        vb = _parse_viewbox(svg_text)
+        if vb is None:
+            return img_tag
+        _, _, w, h = vb
+        if w <= 0 or h <= 0:
+            return img_tag
+        ratio = w / h
+        if ratio < 0.8:
+            cls = "img-portrait"
+        elif ratio > 1.5:
+            cls = "img-landscape"
+        else:
+            cls = "img-square"
+        return f'<div class="img-wrap {cls}">{img_tag}</div>'
+    return re.sub(r'<img[^>]+src="([^"]+\.svg)"[^>]*>', _wrap, html, flags=re.IGNORECASE)
+
+
 def md_to_html(md_text: str, base_dir: Path, title: str) -> str:
     if md_lib is None:
         raise RuntimeError("缺少依赖：pip install markdown")
@@ -78,6 +118,7 @@ def md_to_html(md_text: str, base_dir: Path, title: str) -> str:
         md_text,
         extensions=["tables", "fenced_code", "nl2br", "md_in_html"],
     )
+    body = _classify_svg_images(body, base_dir)
     base_uri = base_dir.resolve().as_uri() + "/"
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">

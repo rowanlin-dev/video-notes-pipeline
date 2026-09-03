@@ -104,6 +104,10 @@ def main():
         d.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
+    # 优先使用完整版 ffmpeg（WinGet 安装的 Gyan.FFmpeg），TRAE 自带精简版缺少音频编码器
+    full_ffmpeg_dir = Path(r"C:\Users\12629\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0-full_build\bin")
+    env["PATH"] = str(full_ffmpeg_dir) + os.pathsep + env.get("PATH", "")
+    ffmpeg_bin = str(full_ffmpeg_dir / "ffmpeg.exe")
     env["BILI_NOTES_WORKSPACE"] = str(run_dir)
     env["BILI_NOTES_FRAMES"] = str(run_dir)
     env["PYTHONIOENCODING"] = "utf-8"
@@ -131,9 +135,9 @@ def main():
             print(f"{'=' * 62}")
             audio_wav = run_dir / "audio_16k.wav"
             # 提取音频
-            subprocess.run(["ffmpeg", "-y", "-i", str(video_ws),
+            subprocess.run([ffmpeg_bin, "-y", "-i", str(video_ws),
                            "-vn", "-ar", "16000", "-ac", "1", str(audio_wav)],
-                           check=True, capture_output=True)
+                           check=True, capture_output=True, env=env)
             print(f"  音频提取完成：{audio_wav}")
 
             # ASR 转写

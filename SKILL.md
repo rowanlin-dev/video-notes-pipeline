@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.1.4
+version: 1.1.5
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
@@ -225,6 +225,68 @@ python md2pdf.py --input runs/<BV>_p<N>/output/note.md
 ```
 
 默认行为（带 `TEXT_API_KEY` 时）完全不变，向后兼容。
+
+## 脑图模式（长视频 / 思维导图图文模式）
+
+>30 分钟的长视频或用户明确要求时，切换为**脑图图文模式**，不依赖截图/OCR/视觉打分。
+
+### 触发条件
+
+- 视频时长 >30 分钟
+- 用户明确要求"思维导图"、"脑图"、"mind map"
+- 截图/OCR/视觉打分 API 不可用或不可靠时
+
+### 工作流程
+
+```
+ASR 字幕 → 写笔记 → 评估内容是否需要脑图 → 生成 Mermaid 图 → 渲染为 SVG → 嵌入 Markdown
+```
+
+1. **ASR 语音转文字**：faster-whisper 将音轨转为字幕 JSON
+2. **写笔记**：根据字幕写出结构化笔记，**标题作为时间节点索引**
+3. **评估内容**：判断每个章节/段落是否适合生成脑图
+4. **生成 Mermaid 图**：对适合的内容手动编写 `.mmd` 文件
+5. **渲染 SVG**：`render_mermaid.py` 通过 mermaid.ink API 渲染，失败时用 `render.html` 浏览器渲染
+6. **嵌入 Markdown**：SVG 图片嵌入笔记中，替换截图
+
+### 脑图生成规则
+
+| 内容类型 | 脑图类型 | 示例 |
+|---------|---------|------|
+| 全局结构 | `mindmap` | 整视频大纲，放全文开头 |
+| 流程步骤 | `flowchart LR` / `flowchart TD` | Vibe Coding SOP、STAR-L 法则 |
+| 时间演进 | `timeline` | AI 编程三阶段 |
+| 系统架构 | `flowchart TD`（含 subgraph） | 全站架构设计 |
+| 能力层级 | `flowchart LR` | 开发者能力层级 |
+| 时间线图 | 手写 SVG Gantt | 1小时交付 SOP |
+
+**不生成脑图的情况**：纯文字概念说明、简单列举、无流程/层级/架构/时间线关系的段落。
+
+### 渲染工具
+
+- `scripts/render_mermaid.py`：通用渲染器，自动扫描 mermaid 目录下所有 `.mmd` 文件，通过 mermaid.ink API 批量渲染为 `.svg`，支持 base64 和 zlib 两种编码策略
+  - 用法：`python scripts/render_mermaid.py --mermaid-dir runs/xxx/output/mermaid`
+- `templates/mermaid-render.html`：浏览器 fallback — API 失败时将 .mmd 文件拖入浏览器渲染，可批量导出 SVG
+- `generate_gantt.py`：根据 JSON 配置文件动态生成甘特图 SVG，**自动根据标签文本长度计算 viewBox 和布局**，无固定数值，标签不会被裁切
+
+### 输出结构
+
+```
+runs/<video>_p1/output/
+├── *.md              # 脑图图文版笔记（含全局 mindmap + 各章节脑图）
+├── *.pdf             # 渲染后的 PDF
+├── images/
+│   ├── mindmap.svg   # 全局大纲脑图
+│   ├── sop.svg       # 流程脑图
+│   ├── starl.svg     # STAR-L 法则
+│   ├── timeline.svg  # 时间线图
+│   ├── architecture.svg  # 架构图
+│   ├── levels.svg    # 层级图
+│   └── ...           # 其他 SVG
+├── mermaid/
+│   └── *.mmd         # Mermaid 源文件（渲染器在 scripts/ 和 templates/ 下，统一使用）
+└── gantt.svg         # 手动渲染的 Gantt 图
+```
 
 ## 笔记写作标准
 

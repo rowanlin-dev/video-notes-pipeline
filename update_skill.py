@@ -39,7 +39,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 允许被更新的「上游核心文件」白名单。
 # 新增需要分发的文件时，请同步加到这里（避免误删 / 误覆盖本地文件）。
 # 注意：路径必须与 GitHub 仓库实际结构一致——主脚本在仓库根目录，
-# 工具模块在 scripts/ 下；weasyprint_pdf.py 是纯本地文件（未上库），不在此列。
+# 工具模块在 scripts/ 下，渲染/脑图模板在 templates/ 下。
 UPSTREAM_FILES = [
     # 根目录文档与入口
     "SKILL.md",
@@ -59,6 +59,8 @@ UPSTREAM_FILES = [
     "learn_trash.py",
     "set_cookie.py",
     "templates/docx_note_v2.py",
+    "templates/mermaid-render.html",
+    "templates/svg/gantt_template.svg",
     # scripts/ 工具模块（真实路径）
     "scripts/requirements.txt",
     "scripts/requirements-optional.txt",
@@ -76,6 +78,10 @@ UPSTREAM_FILES = [
     "scripts/verify_checklist.py",
     "scripts/verify_docx.py",
     "scripts/weasyprint_pdf.py",
+    "scripts/render_mermaid.py",
+    "scripts/svg_padder.py",
+    "scripts/generate_gantt.py",
+    "scripts/quick_select.py",
 ]
 
 # 本地优化文件：更新器永远不碰（端点可放心在这里放自己的密钥 / 配置 / 微调）。

@@ -1,8 +1,8 @@
-# Bilibili Video Notes（工具入口 · v1.1.4）
+# Bilibili Video Notes（工具入口 · v1.1.5）
 
 从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
 
-> 当前版本 **v1.1.4**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
+> 当前版本 **v1.1.5**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
 
 完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
@@ -65,6 +65,38 @@ python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25   #
 | 60 分钟 | 约 35-40 分钟 | 建议 `--segment-minutes 25` 切块 |
 
 实测样本：3.6 分钟→约 6 分钟；10 分钟→约 12 分钟；33 分钟→约 23 分钟。
+
+## 脑图模式（长视频专用）
+
+>30 分钟的长视频或用户明确要求时，切换为**脑图图文模式**，不依赖截图/OCR/视觉打分。
+
+流程：ASR 字幕 → 写笔记（标题作为时间节点索引）→ 评估需补充脑图的内容 → 生成 Mermaid 图 → 渲染为 SVG → 嵌入 Markdown
+
+### 脑图生成规则
+
+| 内容类型 | 脑图类型 | 示例 |
+|---------|---------|------|
+| 全局结构 | mindmap | 整视频大纲 |
+| 流程步骤 | flowchart LR/SOP | Vibe Coding SOP、STAR-L 法则 |
+| 时间演进 | timeline | AI 编程三阶段 |
+| 系统架构 | flowchart TD | 全站架构设计 |
+| 能力层级 | flowchart LR | 开发者能力层级 |
+| 时间线图 | 手写 SVG Gantt | 1小时交付 SOP |
+
+**不生成脑图的情况**：纯文字概念说明、简单列举、无流程/层级/架构/时间线关系的段落。
+
+### 渲染工具
+
+```bash
+# 从 .mmd 文件渲染为 SVG（mermaid.ink API）
+python scripts/render_mermaid.py --mermaid-dir runs/xxx/output/mermaid
+
+# API 失败时：打开 templates/mermaid-render.html 在浏览器中查看
+# 加载 .mmd 文件 → 渲染 → 批量导出 SVG
+
+# 甘特图：根据 JSON 配置动态生成 SVG（自动计算标签区宽度）
+python scripts/generate_gantt.py --config gantt_config.json --output images/gantt.svg
+```
 
 ## 环境注意
 

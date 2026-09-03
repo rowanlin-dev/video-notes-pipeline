@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 400" width="100%" height="auto" style="max-width:720px;display:block;margin:0 auto;font-family:system-ui,-apple-system,sans-serif;">
+  <!--
+    ============================================================
+    SVG 甘特图模板 — 手写版（已废弃，改用脚本生成）
+    ============================================================
+    重要：不要再手动编辑 SVG 甘特图！
+    改用 scripts/generate_gantt.py 脚本动态生成：
+      python generate_gantt.py --config config.json --output output.svg
+    
+    脚本会根据标签文本长度自动计算 viewBox 和布局，
+    避免手动固定数值导致的标签被裁切问题。
+    
+    保留此模板仅作为参考和样式对照。
+    ============================================================
+    布局参考（脚本自动计算，无需手动调整）：
+      - 标签区宽度 = 最大标签文本宽度 + 10px 内边距
+      - 网格起点 = 标签区宽度
+      - viewBox 宽度 = 标签区 + 网格区 + 右内边距
+      - 行标签 text-anchor="end"（右对齐），向左延伸不盖图
+    ============================================================
+    时间坐标映射表（5分钟一格，每格 11px）：
+      grid_x(minute) = minute * 11
+    ============================================================
+  -->
+  <defs>
+    <style>
+      .g-title { fill: #1e1b4b; font-size: 15px; font-weight: 600; font-family: system-ui,-apple-system,sans-serif; }
+      .g-label { fill: #1e1b4b; font-size: 12px; font-family: system-ui,-apple-system,sans-serif; }
+      .g-time { fill: #6b7280; font-size: 11px; text-anchor: middle; font-family: system-ui,-apple-system,sans-serif; }
+      .g-time-line { stroke: #e5e7eb; stroke-width: 0.5; stroke-dasharray: 3,3; }
+      .g-horiz-line { stroke: #f3f4f6; stroke-width: 0.5; }
+      .g-bar-req { fill: #c7d2fe; stroke: #6366f1; stroke-width: 1; rx: 4; ry: 4; }
+      .g-bar-infra { fill: #a7f3d0; stroke: #10b981; stroke-width: 1; rx: 4; ry: 4; }
+      .g-bar-core { fill: #fde68a; stroke: #f59e0b; stroke-width: 1; rx: 4; ry: 4; }
+      .g-bar-finish { fill: #fecaca; stroke: #ef4444; stroke-width: 1; rx: 4; ry: 4; }
+      .g-bar-label { fill: #fff; font-size: 10px; font-weight: 500; text-anchor: middle; dominant-baseline: central; }
+      .g-bar-label-dark { fill: #1e1b4b; font-size: 10px; font-weight: 500; text-anchor: middle; dominant-baseline: central; }
+      .g-legend-text { fill: #6b7280; font-size: 10px; }
+    </style>
+  </defs>
+  <text x="360" y="28" class="g-title" text-anchor="middle">标题</text>
+
+  <!-- 竖线 -->
+  <line x1="140" y1="50" x2="140" y2="350" class="g-time-line"/>
+  <line x1="185" y1="50" x2="185" y2="350" class="g-time-line"/>
+  <line x1="230" y1="50" x2="230" y2="350" class="g-time-line"/>
+  <line x1="275" y1="50" x2="275" y2="350" class="g-time-line"/>
+  <line x1="320" y1="85" x2="320" y2="350" class="g-time-line"/>
+  <line x1="365" y1="85" x2="365" y2="350" class="g-time-line"/>
+  <line x1="410" y1="85" x2="410" y2="350" class="g-time-line"/>
+  <line x1="455" y1="85" x2="455" y2="350" class="g-time-line"/>
+  <line x1="500" y1="85" x2="500" y2="350" class="g-time-line"/>
+  <line x1="545" y1="85" x2="545" y2="350" class="g-time-line"/>
+  <line x1="590" y1="85" x2="590" y2="350" class="g-time-line"/>
+  <line x1="635" y1="85" x2="635" y2="350" class="g-time-line"/>
+  <line x1="680" y1="50" x2="680" y2="350" class="g-time-line"/>
+
+  <!-- 时间刻度 -->
+  <text x="140" y="48" class="g-time">0</text>
+  <text x="230" y="48" class="g-time">10</text>
+  <text x="320" y="48" class="g-time">20</text>
+  <text x="455" y="48" class="g-time">35</text>
+  <text x="545" y="48" class="g-time">45</text>
+  <text x="635" y="48" class="g-time">55</text>
+  <text x="680" y="48" class="g-time">60</text>
+
+  <!-- 行1: 标签 + 柱条 -->
+  <text x="130" y="74" class="g-label" text-anchor="end">标签</text>
+  <rect x="140" y="60" width="90" height="28" class="g-bar-req"/>
+  <text x="185" y="74" class="g-bar-label-dark">0-10min</text>
+  <line x1="140" y1="93" x2="680" y2="93" class="g-horiz-line"/>
+
+  <!-- 图例 -->
+  <g transform="translate(140, 330)">
+    <rect x="0" y="0" width="12" height="12" fill="#c7d2fe" stroke="#6366f1" stroke-width="1" rx="2"/>
+    <text x="16" y="10" class="g-legend-text">图例1</text>
+    <rect x="60" y="0" width="12" height="12" fill="#a7f3d0" stroke="#10b981" stroke-width="1" rx="2"/>
+    <text x="76" y="10" class="g-legend-text">图例2</text>
+  </g>
+</svg>
