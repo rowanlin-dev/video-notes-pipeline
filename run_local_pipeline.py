@@ -9,6 +9,7 @@
   python run_local_pipeline.py --video /path/to/video.mp4
   python run_local_pipeline.py --video /path/to/video.mp4 --title "自定义标题"
   python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25
+  python run_local_pipeline.py --video /path/to/long_lecture.mp4 --parallel-asr --asr-workers 4
 
 依赖：
   pip install faster-whisper av
@@ -60,8 +61,8 @@ def run(cmd, cwd=None, env=None, step=""):
         sys.exit(r.returncode)
 
 
-def get_video_duration(video_path: str) -> float:
-    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+def get_video_duration(video_path: str, ffprobe_bin: str = "ffprobe") -> float:
+    r = subprocess.run([ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
                         "-of", "csv=p=0", video_path], capture_output=True, text=True)
     return float(r.stdout.strip())
 
@@ -98,6 +99,14 @@ def main():
     ap.add_argument("--emit-brief", action="store_true",
                     help="Agent 原生模式：生成笔记简报后停止，由宿主 Agent 自带模型撰写笔记")
     ap.add_argument("--from-step", type=int, default=1, help="从第几步开始")
+    ap.add_argument("--parallel-asr", dest="parallel_asr", action="store_true", default=None,
+                    help="强制并行分块 ASR（长视频提速）；默认时长≥30min 自动启用")
+    ap.add_argument("--no-parallel-asr", dest="parallel_asr", action="store_false",
+                    help="关闭并行 ASR，强制单进程（与原版一致）")
+    ap.add_argument("--asr-workers", type=int, default=4,
+                    help="并行 ASR 进程数（默认 4，低内存机器降到 2）")
+    ap.add_argument("--asr-chunk-minutes", type=int, default=15,
+                    help="并行 ASR 每块分钟数（默认 15，越小越省内存）")
     args = ap.parse_args()
 
     load_env()
@@ -126,9 +135,11 @@ def main():
     if full_ffmpeg_dir is not None:
         env["PATH"] = str(full_ffmpeg_dir) + os.pathsep + env.get("PATH", "")
         ffmpeg_bin = str(full_ffmpeg_dir / "ffmpeg.exe")
+        ffprobe_bin = str(full_ffmpeg_dir / "ffprobe.exe")
         print(f"[pipeline] 使用完整版 ffmpeg：{ffmpeg_bin}")
     else:
         ffmpeg_bin = "ffmpeg"   # 回退 PATH（Windows/Mac/Linux 通用）
+        ffprobe_bin = "ffprobe"
     env["BILI_NOTES_WORKSPACE"] = str(run_dir)
     env["BILI_NOTES_FRAMES"] = str(run_dir)
     env["PYTHONIOENCODING"] = "utf-8"
@@ -138,7 +149,7 @@ def main():
     # 本地视频直接使用原始文件，不再复制到工作目录
     # （避免大文件二次占用磁盘空间与拷贝耗时；源文件不会被修改，可安全直读）
     video_ws = video_path
-    duration = get_video_duration(str(video_ws))
+    duration = get_video_duration(str(video_ws), ffprobe_bin)
     print(f"[pipeline] 视频时长：{duration:.0f}s ({duration/60:.1f}min)")
     print(f"[pipeline] 标题：{title}")
     print(f"[pipeline] 工作目录：{run_dir}")
@@ -161,10 +172,18 @@ def main():
                            check=True, capture_output=True, env=env)
             print(f"  音频提取完成：{audio_wav}")
 
-            # ASR 转写
-            subprocess.run([PY, str(SCRIPTS / "asr_subtitle.py"),
-                           str(audio_wav), str(sub_json), str(sub_txt)],
-                           check=True, env=env)
+            # ASR 转写：长视频自动并行分块（默认≥30min），可用 flag 强制启用/关闭
+            use_parallel = args.parallel_asr if args.parallel_asr is not None else (duration >= 1800)
+            if use_parallel:
+                print(f"  长视频（{duration / 60:.0f}min）→ 并行分块 ASR（{args.asr_workers} 进程 × {args.asr_chunk_minutes}min/块）")
+                asr_cmd = [PY, str(SCRIPTS / "run_asr_parallel.py"), str(audio_wav),
+                           str(sub_json), str(sub_txt),
+                           "--workers", str(args.asr_workers),
+                           "--chunk-minutes", str(args.asr_chunk_minutes)]
+            else:
+                asr_cmd = [PY, str(SCRIPTS / "asr_subtitle.py"),
+                           str(audio_wav), str(sub_json), str(sub_txt)]
+            subprocess.run(asr_cmd, check=True, env=env)
             print(f"  ASR 字幕已生成：{sub_json}")
 
             # 清理临时音频

@@ -1,8 +1,8 @@
-# Bilibili Video Notes（工具入口 · v1.1.7）
+# Bilibili Video Notes（工具入口 · v1.1.8）
 
 从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
 
-> 当前版本 **v1.1.7**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
+> 当前版本 **v1.1.8**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
 
 完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
@@ -46,6 +46,8 @@ python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25   #
 流程：提取音频 → 本地 ASR（faster-whisper）转文字 → 定时抽帧（PyAV）→ OCR 去重 → 视觉打分 → 自动精选 → 生成 MD + PDF →（可选）入 ima。
 与 B 站差异：默认禁用自进化黑名单、哈希去重阈值 20、输出在 `runs/local_<标题>_p1/output/`。
 依赖：额外 `pip install av`。
+
+**长视频并行 ASR**：时长 ≥30min 自动切分 + 多进程并行（`scripts/run_asr_parallel.py`），合并结果同单进程；可用 `--parallel-asr` / `--no-parallel-asr` 覆盖，`--asr-workers N`（默认 4）、`--asr-chunk-minutes M`（默认 15）调参。引擎变体：`asr_subtitle.py`（VAD 默认）/ `asr_fast.py`（关 VAD 快转）/ `asr_ct2.py`（直连 CTranslate2 绕 MKL）。详见 SKILL.md「ASR 音频转文本」节。
 
 ## Agent 原生模式（免外部 LLM）
 

@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.1.7
+version: 1.1.8
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
@@ -202,6 +202,30 @@ python run_local_pipeline.py --video /path/to/video.mp4
 - 输出在 `runs/local_<标题>_p1/output/` 下
 
 **依赖**：需要额外安装 `pip install av`（PyAV 用于抽帧），ASR 模型见上方「常见坑与对策 §2」。
+
+## ASR 音频转文本（长视频并行分块 + 多引擎）
+
+无官方字幕时，本地 ASR（faster-whisper small，CPU int8）把音轨转为带时间戳字幕 JSON/TXT。长视频（默认 **≥30min**）在 `run_local_pipeline.py` 中**自动切分 + 多进程并行**提速，短视频保持单进程原行为。
+
+### 长视频自动并行（run_local_pipeline.py）
+- 自动：时长 ≥30min 时改用 `scripts/run_asr_parallel.py`（ffmpeg 切 N 块 → `ProcessPoolExecutor` 并行跑 → 按时间偏移合并字幕）。
+- 覆盖开关：`--parallel-asr` 强制并行 / `--no-parallel-asr` 强制单进程（与原版一致）；`--asr-workers N`（默认 4，低内存机器降到 2）、`--asr-chunk-minutes M`（默认 15，越小越省内存）。
+- 合并结果与单进程**完全一致**，下游抽帧/笔记步骤无感。
+
+### 三种 ASR 引擎（scripts/）
+| 脚本 | 模式 | 适用 |
+|------|------|------|
+| `asr_subtitle.py` | VAD 过滤（默认） | 通用，断句/标点干净 |
+| `asr_fast.py` | 关 VAD，小模型快转 | 长音频求快，内存略高 |
+| `asr_ct2.py` | 直连 CTranslate2 | 绕开 MKL 内存分配失败 |
+
+> `run_asr_parallel.py` 默认调用 `asr_subtitle.py`；加 `--no-vad` 切到 `asr_fast.py`。三者均设 `OMP_NUM_THREADS`/`MKL_NUM_THREADS=2` 防止 `mkl_malloc: failed to allocate memory`。
+
+### 独立使用（对任意 16k 单声道 wav）
+```bash
+python scripts/run_asr_parallel.py runs/xxx/audio_16k.wav runs/xxx/subtitles.json \
+    --chunk-minutes 20 --workers 2
+```
 
 ## Agent 原生模式（无需外部 LLM，省 Key / 账单）
 
