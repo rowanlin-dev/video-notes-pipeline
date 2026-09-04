@@ -1,8 +1,8 @@
-# Bilibili Video Notes（工具入口 · v1.1.8）
+# Bilibili Video Notes（工具入口 · v1.1.9）
 
 从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
 
-> 当前版本 **v1.1.8**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
+> 当前版本 **v1.1.9**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
 
 完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
@@ -76,14 +76,16 @@ python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25   #
 
 ### 脑图生成规则
 
-| 内容类型 | 脑图类型 | 示例 |
+| 内容类型 | 脑图类型 | 说明 |
 |---------|---------|------|
-| 全局结构 | mindmap | 整视频大纲 |
-| 流程步骤 | flowchart LR/SOP | Vibe Coding SOP、STAR-L 法则 |
-| 时间演进 | timeline | AI 编程三阶段 |
-| 系统架构 | flowchart TD | 全站架构设计 |
-| 能力层级 | flowchart LR | 开发者能力层级 |
+| 全局结构 / 多分支大纲 | `mindmap` | 整视频大纲，放全文开头。**禁用 `flowchart` 替代** |
+| 流程步骤 | `flowchart LR` / `flowchart TD` | Vibe Coding SOP、STAR-L 法则 |
+| 时间演进 | `timeline` | AI 编程三阶段 |
+| 系统架构 | `flowchart TD`（含 subgraph） | 全站架构设计 |
+| 能力层级 | `flowchart LR` | 开发者能力层级 |
 | 时间线图 | 手写 SVG Gantt | 1小时交付 SOP |
+
+> **重要**：全局大纲/多分支结构必须使用 `mindmap` 语法（树形发散），不要用 `flowchart` 替代。`flowchart` 的有向箭头和方框样式不适合展现多分支聚合结构，效果不如 mindmap 的树形发散美观。
 
 **不生成脑图的情况**：纯文字概念说明、简单列举、无流程/层级/架构/时间线关系的段落。
 

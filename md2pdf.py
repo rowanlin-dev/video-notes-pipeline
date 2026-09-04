@@ -111,9 +111,23 @@ def _classify_svg_images(html: str, base_dir: Path) -> str:
     return re.sub(r'<img[^>]+src="([^"]+\.svg)"[^>]*>', _wrap, html, flags=re.IGNORECASE)
 
 
+def _preprocess_markdown_images(md_text: str) -> str:
+    """将<div align="center">内的 ![alt](path) 转换为 <img alt="alt" src="path">。
+    markdown 库在 HTML 块标签内不解析 Markdown 图片，需要预处理。
+    """
+    def _replace_img(match):
+        alt = match.group(1)
+        src = match.group(2)
+        return f'<img src="{src}" alt="{alt}">'
+    # 匹配 ![...](...)，处理换行和空格
+    return re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', _replace_img, md_text)
+
+
 def md_to_html(md_text: str, base_dir: Path, title: str) -> str:
     if md_lib is None:
         raise RuntimeError("缺少依赖：pip install markdown")
+    # 预处理：将 ![alt](src) 转换为 <img>，解决 HTML 块内不解析问题
+    md_text = _preprocess_markdown_images(md_text)
     body = md_lib.markdown(
         md_text,
         extensions=["tables", "fenced_code", "nl2br", "md_in_html"],

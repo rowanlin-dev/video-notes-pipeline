@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.1.8
+version: 1.1.9
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
@@ -275,14 +275,16 @@ ASR 字幕 → 写笔记 → 评估内容是否需要脑图 → 生成 Mermaid �
 
 ### 脑图生成规则
 
-| 内容类型 | 脑图类型 | 示例 |
+| 内容类型 | 脑图类型 | 说明 |
 |---------|---------|------|
-| 全局结构 | `mindmap` | 整视频大纲，放全文开头 |
+| 全局结构 / 多分支大纲 | `mindmap` | 整视频大纲，放全文开头。**禁用 `flowchart` 替代**，mindmap 的树形发散样式更聚合美观 |
 | 流程步骤 | `flowchart LR` / `flowchart TD` | Vibe Coding SOP、STAR-L 法则 |
 | 时间演进 | `timeline` | AI 编程三阶段 |
 | 系统架构 | `flowchart TD`（含 subgraph） | 全站架构设计 |
 | 能力层级 | `flowchart LR` | 开发者能力层级 |
 | 时间线图 | 手写 SVG Gantt | 1小时交付 SOP |
+
+> **重要**：全局大纲/多分支结构必须使用 `mindmap` 语法（树形发散），**不要用 `flowchart TD/LR` 替代**。`flowchart` 的有向箭头和方框样式不适合展现多分支聚合结构，效果不如 mindmap 的树形发散美观。
 
 **不生成脑图的情况**：纯文字概念说明、简单列举、无流程/层级/架构/时间线关系的段落。
 
