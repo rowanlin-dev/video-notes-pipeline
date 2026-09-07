@@ -7,17 +7,35 @@
   2. 用 multiprocessing.Pool 并行跑 faster-whisper
   3. 按时间偏移合并字幕结果
 
+自动 VAD 检测（默认）：
+  - 先跑第一块（带 VAD），根据字幕密度判断
+  - 密集（>8条/分钟）→ 后续块用无 VAD 快速模式
+  - 稀疏（≤8条/分钟）→ 后续块保持 VAD
+
+内存自适应（默认）：
+  - 自动检测可用内存和 CPU 核数
+  - 自动选择模型尺寸（tiny/base/small）
+  - 自动调整并行进程数和分块大小
+  - 为系统保留至少 4GB 余量，不影响正常使用
+  - 可通过环境变量 ASR_MODEL_SIZE / ASR_WORKERS / ASR_CHUNK_MINUTES 覆盖
+
 用法：
   python scripts/run_asr_parallel.py <音频.wav> <输出.json> [输出.txt] [选项]
 
 选项：
-  --chunk-minutes CHUNK    每块分钟数（默认 15，越小内存越省）
-  --workers WORKERS        并行进程数（默认 4，根据 CPU 核数调整）
-  --no-vad                 禁用 VAD（
+  --chunk-minutes CHUNK    每块分钟数（默认 auto，根据内存自适应）
+  --workers WORKERS        并行进程数（默认 auto，根据 CPU/内存自适应）
+  --model-size SIZE        模型尺寸 tiny|base|small（默认 auto，根据内存自适应）
+  --no-vad                 强制禁用 VAD（用 asr_fast.py）
+  --vad                    强制启用 VAD（用 asr_subtitle.py，默认自动）
   --keep-chunks            保留分块临时文件
 
 环境变量：
   OMP_NUM_THREADS / MKL_NUM_THREADS  控制 MKL 线程数（默认 2）
+  ASR_MODEL_SIZE    tiny | base | small（覆盖模型选择）
+  ASR_WORKERS       整数（覆盖并行度）
+  ASR_CHUNK_MINUTES 整数（覆盖分块大小）
+  ASR_RESERVE_GB    浮点数（覆盖系统保留内存，默认 4）
 """
 import json, os, sys, time, argparse, subprocess, shutil, textwrap
 from pathlib import Path
@@ -28,7 +46,13 @@ os.environ.setdefault("MKL_NUM_THREADS", "2")
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
-ASR_SCRIPT = str(SCRIPTS / "asr_subtitle.py")
+ASR_SUB = str(SCRIPTS / "asr_subtitle.py")   # 带 VAD
+ASR_FAST = str(SCRIPTS / "asr_fast.py")       # 无 VAD
+DENSITY_THRESHOLD = 8  # 条/分钟，超过则视为密集讲课
+
+# 内存自适应模块
+sys.path.insert(0, str(SCRIPTS))
+from asr_memory_config import get_asr_config, print_config, MODEL_SIZES
 
 
 def _mmss(s: float) -> str:
@@ -95,13 +119,14 @@ def _resolve_ffmpeg() -> tuple[str, str]:
     return "ffmpeg", "ffprobe"
 
 
-def _run_asr_chunk(chunk_info: dict) -> dict:
+def _run_asr_chunk(chunk_info: dict, asr_script: str = None) -> dict:
     """在子进程中跑 ASR，返回 {index, offset, body}。"""
     chunk_path = str(chunk_info["path"])
     offset = chunk_info["offset"]
     index = chunk_info["index"]
+    script = asr_script or ASR_SUB
 
-    # 临时输出路径（JSON + TXT 都落在 chunk_dir，避免写入 cwd 产生 stray subtitles.txt）
+    # 临时输出路径
     tmp_json = chunk_path.replace(".wav", ".json")
     tmp_txt = chunk_path.replace(".wav", ".txt")
 
@@ -110,7 +135,7 @@ def _run_asr_chunk(chunk_info: dict) -> dict:
     env["MKL_NUM_THREADS"] = "2"
 
     r = subprocess.run(
-        [sys.executable, ASR_SCRIPT, chunk_path, tmp_json, tmp_txt],
+        [sys.executable, script, chunk_path, tmp_json, tmp_txt],
         capture_output=True, text=True, env=env
     )
 
@@ -131,25 +156,30 @@ def _run_asr_chunk(chunk_info: dict) -> dict:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="并行 ASR 转写：分块 + 多进程",
+        description="并行 ASR 转写：分块 + 多进程（内存自适应）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             示例:
               python scripts/run_asr_parallel.py runs/xxx/audio_16k.wav runs/xxx/subtitles.json
               python scripts/run_asr_parallel.py audio.wav out.json --chunk-minutes 20 --workers 2
+              python scripts/run_asr_parallel.py audio.wav out.json --no-vad
+              python scripts/run_asr_parallel.py audio.wav out.json --model-size tiny
         """))
     ap.add_argument("audio", help="16kHz 单声道 WAV 音频文件")
     ap.add_argument("output_json", help="输出字幕 JSON 路径")
     ap.add_argument("output_txt", nargs="?", default=None, help="输出字幕 TXT 路径")
-    ap.add_argument("--chunk-minutes", type=int, default=15, help="每块分钟数（默认 15）")
-    ap.add_argument("--workers", type=int, default=4, help="并行进程数（默认 4）")
-    ap.add_argument("--no-vad", action="store_true", help="禁用 VAD（用 asr_fast.py）")
+    ap.add_argument("--chunk-minutes", type=int, default=None,
+                    help="每块分钟数（默认 auto，根据内存自适应）")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="并行进程数（默认 auto，根据 CPU/内存自适应）")
+    ap.add_argument("--model-size", type=str, default=None,
+                    choices=["tiny", "base", "small"],
+                    help="模型尺寸（默认 auto，根据内存自适应）")
+    vad_group = ap.add_mutually_exclusive_group()
+    vad_group.add_argument("--no-vad", action="store_true", help="强制禁用 VAD（用 asr_fast.py）")
+    vad_group.add_argument("--vad", action="store_true", help="强制启用 VAD（用 asr_subtitle.py，默认自动）")
     ap.add_argument("--keep-chunks", action="store_true", help="保留分块临时文件")
     args = ap.parse_args()
-
-    global ASR_SCRIPT
-    if args.no_vad:
-        ASR_SCRIPT = str(SCRIPTS / "asr_fast.py")
 
     audio_path = Path(args.audio)
     if not audio_path.exists():
@@ -166,23 +196,69 @@ def main():
                         "-of", "csv=p=0", str(audio_path)], capture_output=True, text=True)
     duration = float(r.stdout.strip())
     print(f"[pipeline] 音频: {audio_path.name} ({_fmt_duration(duration)})")
-    print(f"[pipeline] 分块: {args.chunk_minutes}min/块 × {args.workers} 进程并行")
+
+    # ---- 内存自适应配置 ----
+    print(f"\n>>> 内存自适应检测")
+    cfg = get_asr_config(
+        prefer_model=args.model_size,
+        prefer_workers=args.workers,
+        prefer_chunk=args.chunk_minutes,
+    )
+    print_config(cfg)
+
+    # 将模型尺寸写入环境变量，子进程可继承
+    os.environ["ASR_MODEL_SIZE"] = cfg.model_size
 
     t0 = time.time()
 
     # Step 1: 切分音频
     chunk_dir = audio_path.parent / f"_chunks_{Path(args.output_json).stem}"
     print(f"\n>>> Step 1/3  切分音频 → {chunk_dir}")
-    chunks = _split_audio(audio_path, chunk_dir, args.chunk_minutes, ffmpeg_bin, ffprobe_bin)
+    chunks = _split_audio(audio_path, chunk_dir, cfg.chunk_minutes, ffmpeg_bin, ffprobe_bin)
     n_chunks = len(chunks)
     print(f"  共 {n_chunks} 块")
 
     # Step 2: 并行 ASR
-    print(f"\n>>> Step 2/3  并行 ASR（{args.workers} 进程）")
+    print(f"\n>>> Step 2/3  并行 ASR（{cfg.workers} 进程）")
+
+    # 自动检测 VAD 模式
+    auto_asr: list[str] = []
+    if args.no_vad:
+        print("  [vad] 强制禁用 VAD（所有块用 asr_fast.py）")
+        for _ in chunks:
+            auto_asr.append(ASR_FAST)
+    elif args.vad:
+        print("  [vad] 强制启用 VAD（所有块用 asr_subtitle.py）")
+        for _ in chunks:
+            auto_asr.append(ASR_SUB)
+    else:
+        # 默认：先跑第一块（带 VAD），计算密度决定后续
+        print("  [vad] 自动检测：先跑第一块计算密度")
+        first_chunks = [chunks[0]]
+        with ProcessPoolExecutor(max_workers=1) as pool:
+            futures = {pool.submit(_run_asr_chunk, ch, ASR_SUB): ch["index"] for ch in first_chunks}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                res = fut.result()
+                n_seg = len(res["body"])
+                density = n_seg / (chunks[0]["duration"] / 60)
+                print(f"  [chunk 000] OK {n_seg} 条, 密度 {density:.1f} 条/分钟")
+                if density > DENSITY_THRESHOLD:
+                    print(f"  [vad] 密度 > {DENSITY_THRESHOLD} → 密集讲课，后续启用无 VAD 快速模式")
+                    mode_first = ASR_SUB
+                    mode_rest = ASR_FAST
+                else:
+                    print(f"  [vad] 密度 ≤ {DENSITY_THRESHOLD} → 稀疏，后续保持 VAD")
+                    mode_first = ASR_SUB
+                    mode_rest = ASR_SUB
+                auto_asr.append(mode_first)
+                for _ in chunks[1:]:
+                    auto_asr.append(mode_rest)
+
     t1 = time.time()
     results = []
-    with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(_run_asr_chunk, ch): ch["index"] for ch in chunks}
+    with ProcessPoolExecutor(max_workers=cfg.workers) as pool:
+        futures = {pool.submit(_run_asr_chunk, ch, auto_asr[i]): i for i, ch in enumerate(chunks)}
         for fut in as_completed(futures):
             idx = futures[fut]
             try:
@@ -190,7 +266,8 @@ def main():
                 results.append(res)
                 n_seg = len(res["body"])
                 status = "OK" if res["returncode"] == 0 else "FAIL"
-                print(f"  [chunk {idx:03d}] {status}  {n_seg} 条字幕"
+                script_name = Path(auto_asr[idx]).name
+                print(f"  [chunk {idx:03d}] {status}  {n_seg} 条字幕 ({script_name})"
                       + (f"  err: {res['stderr'][:80]}" if res["returncode"] != 0 else ""))
             except Exception as e:
                 print(f"  [chunk {idx:03d}] ERROR: {e}")

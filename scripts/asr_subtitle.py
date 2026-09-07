@@ -8,6 +8,7 @@
 环境变量:
     OMP_NUM_THREADS / MKL_NUM_THREADS  控制 MKL 线程数（默认 2），
     避免 mkl_malloc: failed to allocate memory。
+    ASR_MODEL_SIZE   tiny | base | small（默认 small，内存自适应）
 """
 import json, os, sys, time
 
@@ -17,6 +18,13 @@ os.environ.setdefault("MKL_NUM_THREADS", "2")
 
 from faster_whisper import WhisperModel
 
+# 内置模型尺寸映射
+MODEL_DIRS = {
+    "tiny": "models/faster-whisper-tiny",
+    "base": "models/faster-whisper-base",
+    "small": "models/faster-whisper-small",
+}
+
 
 def _mmss(s: float) -> str:
     """秒 -> MMmSSs（与 extract_frames 字幕 TXT 同构，md_note 可解析）。"""
@@ -24,12 +32,32 @@ def _mmss(s: float) -> str:
     m, sec = divmod(s, 60)
     return f"{m:02d}m{sec:02d}s"
 
+
+def _resolve_model_dir() -> str:
+    """根据环境变量和可用性选择模型目录。"""
+    env_size = os.environ.get("ASR_MODEL_SIZE", "").strip().lower()
+    if env_size in MODEL_DIRS:
+        return MODEL_DIRS[env_size]
+    # 命令行第 4 个参数
+    if len(sys.argv) > 4:
+        return sys.argv[4]
+    # 默认 small
+    return MODEL_DIRS["small"]
+
+
 AUDIO = sys.argv[1] if len(sys.argv) > 1 else "/tmp/audio_16k.wav"
 OUT_JSON = sys.argv[2] if len(sys.argv) > 2 else "subtitles.json"
 OUT_TXT = sys.argv[3] if len(sys.argv) > 3 else "subtitles.txt"
-MODEL_DIR = sys.argv[4] if len(sys.argv) > 4 else "models/faster-whisper-small"
+MODEL_DIR = _resolve_model_dir()
 
-print("加载模型...", flush=True)
+# 从模型目录推断尺寸名用于日志
+_model_size_name = "unknown"
+for k, v in MODEL_DIRS.items():
+    if v == MODEL_DIR:
+        _model_size_name = k
+        break
+
+print(f"加载模型 ({_model_size_name})...", flush=True)
 model = WhisperModel(MODEL_DIR, device="cpu", compute_type="int8", cpu_threads=2)
 print("开始识别...", flush=True)
 t0 = time.time()

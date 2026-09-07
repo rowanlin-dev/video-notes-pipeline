@@ -183,7 +183,17 @@ _FRAME_RULE = (
     "- 严禁把所有占位符堆在文章末尾——必须分散在正文各处。\n"
     "- 截图已按时间顺序给出，插入顺序应与之大致一致。"
 )
-_NO_FRAME_NOTE = "（本视频无配图，纯文字笔记，不需要插入截图占位符。）"
+_NO_FRAME_NOTE = (
+    "（本视频无配图，需要你生成 Mermaid 图来辅助说明。\n"
+    "对于以下内容类型，请生成对应的 Mermaid 代码块（用 ```mermaid 标记）：\n"
+    "  - 全局结构/大纲：用 `mindmap` 语法，放在文章最开头（# 标题下方，所有小节之前）\n"
+    "  - 各小节结构/大纲：用 `mindmap` 语法，放在该小节标题（## 或 ###）下方，作为该节的概述\n"
+    "  - 流程步骤：用 `flowchart LR` 或 `flowchart TD`\n"
+    "  - 系统架构：用 `flowchart TD`（含 subgraph）\n"
+    "  - 时间演进：用 `timeline`\n"
+    "  - 分类/集合：用 `flowchart TD` + 子图\n"
+    "Mermaid 代码块必须放在对应内容段落的开头（紧跟标题之后），不要堆在段落末尾或文末。\n"
+    "每个图下方用 `![图 N 描述](images/图_N_描述.svg)` 占位，N 从 1 递增。")
 
 
 def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frames, sub_level=2):
@@ -218,9 +228,11 @@ def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frame
         "其余通用要求：\n"
         f"1. 用 Markdown 输出，从{h}级标题 `{h}` 开始（不写一级标题，不用代码块包裹整篇）。\n"
         "2. 正文按知识点分节，逻辑连贯、有信息密度，避免复述口语。\n"
-        "3. 若截图/字幕里是流程图、架构图、公式、代码或操作步骤，要在正文用文字把逻辑讲清，让人不看图也懂。\n"
-        "4. 不出现「本视频」「UP主」「这个视频」之类口语，直接讲内容本身。\n"
-        "5. 全文简体中文。")
+        "3. 每个小节标题应包含该段内容在视频中的时间范围，格式如 `[00:00-06:19]`，放在标题末尾。\n"
+        "   示例：`### 1. AI 时代的前端变革 [00:00-06:19]`\n"
+        "4. 若截图/字幕里是流程图、架构图、公式、代码或操作步骤，要在正文用文字把逻辑讲清，让人不看图也懂。\n"
+        "5. 不出现「本视频」「UP主」「这个视频」之类口语，直接讲内容本身。\n"
+        "6. 全文简体中文。")
     parts.append(
         f"★ 字数控制：本笔记目标约 {target_chars} 字（允许 ±15% 浮动）。"
         "信息密度优先——既不要注水凑字数，也不要过简漏掉关键论证。")
@@ -764,9 +776,14 @@ def main():
         if frames:
             body = inject_frames(body, frames, args.img_prefix)
 
-    header = (f"# {title}\n\n"
-              f"> 来源：[{args.bvid}](https://www.bilibili.com/video/{args.bvid}/?p={args.page})"
-              f" · P{args.page} · 共 {len(frames)} 张图解\n\n---\n\n")
+    n_frames = len(frames)
+    if n_frames == 0:
+        header = (f"# {title}\n\n"
+                  f"> 来源：{args.bvid} · P{args.page} · 纯文字笔记（无截图）\n\n---\n\n")
+    else:
+        header = (f"# {title}\n\n"
+                  f"> 来源：[{args.bvid}](https://www.bilibili.com/video/{args.bvid}/?p={args.page})"
+                  f" · P{args.page} · 共 {n_frames} 张图解\n\n---\n\n")
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)

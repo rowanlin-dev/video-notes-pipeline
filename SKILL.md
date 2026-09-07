@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.1.9
+version: 1.2.0
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
@@ -203,28 +203,99 @@ python run_local_pipeline.py --video /path/to/video.mp4
 
 **依赖**：需要额外安装 `pip install av`（PyAV 用于抽帧），ASR 模型见上方「常见坑与对策 §2」。
 
-## ASR 音频转文本（长视频并行分块 + 多引擎）
+## ASR 音频转文本（长视频并行分块 + 内存自适应 + 多引擎）
 
-无官方字幕时，本地 ASR（faster-whisper small，CPU int8）把音轨转为带时间戳字幕 JSON/TXT。长视频（默认 **≥30min**）在 `run_local_pipeline.py` 中**自动切分 + 多进程并行**提速，短视频保持单进程原行为。
+无官方字幕时，本地 ASR（faster-whisper，CPU int8）把音轨转为带时间戳字幕 JSON/TXT。长视频（默认 **≥30min**）在 `run_local_pipeline.py` 中**自动切分 + 多进程并行**提速，短视频保持单进程原行为。
+
+### 内存自适应（v1.2.0 新增）
+
+自动检测硬件配置，选择最优参数，确保不影响正常使用：
+
+| 硬件（可用内存-余量） | 模型尺寸 | 并行进程 | 分块大小 |
+|----------------------|---------|---------|---------|
+| ≥12GB 可用 | small（2GB） | 至多4进程 | 20min/块 |
+| 4-12GB 可用 | base（0.6GB） | 2进程 | 15min/块 |
+| <4GB 可用 | tiny（0.3GB） | 1进程 | 10min/块 |
+
+**余量**：始终保留 4GB 给系统（可通过 `ASR_RESERVE_GB=6` 调大）。
+
+**原理**：`scripts/asr_memory_config.py` 通过 ctypes 检测可用物理内存和 CPU 核数，计算安全配置：
+- 模型尺寸：可用内存 - 4GB 余量后，选择能容纳的最大模型
+- 并行度：按内存（每 worker 需模型+1GB缓冲）和 CPU 核数取较小值，2核机器强制 1 进程
+- 分块大小：内存紧张时缩小（10min），充裕时放大（20min）
+
+**覆盖方式**（优先级：环境变量 > 参数 > 自动检测）：
+```bash
+# 环境变量覆盖
+set ASR_MODEL_SIZE=tiny     # tiny | base | small
+set ASR_WORKERS=2            # 并行进程数
+set ASR_CHUNK_MINUTES=10     # 每块分钟数
+set ASR_RESERVE_GB=6.0       # 保留内存（默认 4GB）
+
+# 参数覆盖
+python scripts/run_asr_parallel.py audio.wav out.json --model-size tiny --workers 1
+python run_local_pipeline.py --video demo.mp4 --asr-model-size base --asr-workers 2
+```
+
+### 模型选择指南
+
+安装时（`setup_windows.bat`）会自动下载两个模型，覆盖不同场景：
+
+| 模型 | 大小 | 适用场景 | 使用策略 |
+|------|------|---------|---------|
+| **small** | ~2GB | **稳定运行，效率较好** | 内存充裕时默认使用；识别精度最高 |
+| **base** | ~0.6GB | **内存紧张时使用** | 可用内存 < 8GB 时自动切换；内存占用仅 small 的 1/3，速度更快 |
+
+**工作方式**：运行 ASR 时，`asr_memory_config.py` 自动检测当前可用内存，减去 4GB 系统余量后，选择能容纳的最大模型。用户无需手动切换——内存够时自动用 small，同时运行其他应用导致内存紧张时自动降级到 base。
+
+**手动切换**（需要时）：
+```bash
+# 环境变量（临时切换）
+set ASR_MODEL_SIZE=base    # 本次会话生效
+python run_local_pipeline.py --video demo.mp4
+
+# 命令行参数（单次切换）
+python run_local_pipeline.py --video demo.mp4 --asr-model-size base
+```
 
 ### 长视频自动并行（run_local_pipeline.py）
 - 自动：时长 ≥30min 时改用 `scripts/run_asr_parallel.py`（ffmpeg 切 N 块 → `ProcessPoolExecutor` 并行跑 → 按时间偏移合并字幕）。
-- 覆盖开关：`--parallel-asr` 强制并行 / `--no-parallel-asr` 强制单进程（与原版一致）；`--asr-workers N`（默认 4，低内存机器降到 2）、`--asr-chunk-minutes M`（默认 15，越小越省内存）。
+- 覆盖开关：`--parallel-asr` 强制并行 / `--no-parallel-asr` 强制单进程（与原版一致）；`--asr-workers N`（默认 auto）、`--asr-chunk-minutes M`（默认 auto）、`--asr-model-size SIZE`（默认 auto）。
 - 合并结果与单进程**完全一致**，下游抽帧/笔记步骤无感。
 
-### 三种 ASR 引擎（scripts/）
+### 自动 VAD 检测（默认行为）
+`run_asr_parallel.py` 默认自动检测内容密度，选择最快模式：
+- 第一块先用带 VAD 的 `asr_subtitle.py`，计算**字幕密度**（字幕条数 ÷ 块时长）
+- 密度 > **8条/分钟** → **密集讲课视频** → 后续块用无 VAD 快速模式（快 30%-50%）
+- 密度 ≤ **8条/分钟** → 稀疏/访谈/问答 → 后续块保持 VAD
+- 强制开关：`--no-vad`（全块无VAD）、`--vad`（全块带VAD）
+
+### 四种 ASR 引擎（scripts/）
 | 脚本 | 模式 | 适用 |
 |------|------|------|
-| `asr_subtitle.py` | VAD 过滤（默认） | 通用，断句/标点干净 |
-| `asr_fast.py` | 关 VAD，小模型快转 | 长音频求快，内存略高 |
+| `asr_subtitle.py` | VAD 过滤（默认） | 通用，断句/标点干净，适合稀疏/问答 |
+| `asr_fast.py` | 关 VAD，小模型快转 | 密集讲课视频更快，内存略高 |
 | `asr_ct2.py` | 直连 CTranslate2 | 绕开 MKL 内存分配失败 |
+| `run_asr_direct.py` | 单进程无分块 | 调试/短音频，内存自适应 |
 
-> `run_asr_parallel.py` 默认调用 `asr_subtitle.py`；加 `--no-vad` 切到 `asr_fast.py`。三者均设 `OMP_NUM_THREADS`/`MKL_NUM_THREADS=2` 防止 `mkl_malloc: failed to allocate memory`。
+> 四者均通过 `ASR_MODEL_SIZE` 环境变量支持模型尺寸切换，设 `OMP_NUM_THREADS`/`MKL_NUM_THREADS=2` 防止 `mkl_malloc: failed to allocate memory`。
 
 ### 独立使用（对任意 16k 单声道 wav）
 ```bash
-python scripts/run_asr_parallel.py runs/xxx/audio_16k.wav runs/xxx/subtitles.json \
-    --chunk-minutes 20 --workers 2
+# 并行分块 ASR（内存自适应，推荐）
+python scripts/run_asr_parallel.py runs/xxx/audio_16k.wav runs/xxx/subtitles.json
+
+# 强制小模型+单进程（低内存机器）
+python scripts/run_asr_parallel.py audio.wav out.json --model-size tiny --workers 1
+
+# 强制全块无VAD（讲课视频）
+python scripts/run_asr_parallel.py audio.wav out.json --no-vad
+
+# 强制全块带VAD（访谈视频）
+python scripts/run_asr_parallel.py audio.wav out.json --vad
+
+# 单进程（调试/短音频）
+python scripts/run_asr_direct.py audio.wav out.json
 ```
 
 ## Agent 原生模式（无需外部 LLM，省 Key / 账单）
@@ -282,9 +353,37 @@ ASR 字幕 → 写笔记 → 评估内容是否需要脑图 → 生成 Mermaid �
 | 时间演进 | `timeline` | AI 编程三阶段 |
 | 系统架构 | `flowchart TD`（含 subgraph） | 全站架构设计 |
 | 能力层级 | `flowchart LR` | 开发者能力层级 |
+| **分类/集合展示** | `flowchart TD` + 子图 `direction LR` | 类型系统、功能模块、技术栈分类，子图内元素并列，子图间纵向演进 |
 | 时间线图 | 手写 SVG Gantt | 1小时交付 SOP |
 
 > **重要**：全局大纲/多分支结构必须使用 `mindmap` 语法（树形发散），**不要用 `flowchart TD/LR` 替代**。`flowchart` 的有向箭头和方框样式不适合展现多分支聚合结构，效果不如 mindmap 的树形发散美观。
+
+### 流程图布局最佳实践
+
+**分类/集合图模板**（用于展示技术栈、类型系统、模块分类等并列关系）：
+
+```mermaid
+flowchart TD
+    subgraph Group1["分类1"]
+        direction LR
+        A["元素A"] --- B["元素B"]      # --- 无箭头，表示并列关系
+        B --- C["元素C"]
+    end
+    subgraph Group2["分类2"]
+        direction LR
+        D["元素D"] --- E["元素E"]
+    end
+    Group1 --> Group2                    # --> 有箭头，表示演进方向
+```
+
+**连线规则**：
+| 场景 | 连线类型 | 含义 |
+|------|---------|------|
+| 子图内并列元素（无序集合） | `---` | 无箭头，表示分类/并列关系 |
+| 子图内有序元素（步骤链） | `-->` | 有箭头，表示顺序/依赖关系 |
+| 子图间主干流程 | `-->` | 有箭头，表示学习/演进方向 |
+
+**关键坑**：`flowchart TD` 父图中，子图内即使写了 `direction LR`，如果**节点之间没有连线**，仍会堆叠成纵向。必须用 `---` 或 `-->` 连接节点，`direction LR` 才能生效。
 
 **不生成脑图的情况**：纯文字概念说明、简单列举、无流程/层级/架构/时间线关系的段落。
 

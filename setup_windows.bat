@@ -80,16 +80,52 @@ python -m pip install -r scripts/requirements.txt -i %PY_MIRROR%
 echo.
 
 :: ------------------------------------------------------------------
-:: 5) 预下载 ASR 模型（HF 镜像，避免首次跑视频时卡在 HuggingFace）
+:: 5) 预下载 ASR 模型（HF 镜像 + 内存自适应，避免首次跑视频时卡住）
 :: ------------------------------------------------------------------
-echo [5/5] 预下载 faster-whisper 模型（HF 镜像，约 480MB）...
+echo [5/5] 预下载 faster-whisper 模型（HF 镜像）...
+
+:: 检测可用内存（GB）
+for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "& { (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB - [math]::Round(1.5) }"`) do set "AVAIL_GB=%%a"
+if "!AVAIL_GB!"=="" set "AVAIL_GB=8"
+echo   检测到物理内存：约 !AVAIL_GB! GB
+
 set "HF_ENDPOINT=https://hf-mirror.com"
 set "HF_HUB_DISABLE_XET=1"
 python -m pip install -U huggingface_hub -i %PY_MIRROR% >nul 2>nul
+
+:: 模型 A：small（稳定运行，效率较好，~2GB）— 内存充裕时用
+echo.
+echo   下载模型 A：faster-whisper-small（稳定运行，效率较好，约 2GB）
+echo     适用场景：内存 ≥ 8GB 的机器，默认 ASR 使用此模型
 huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
 if errorlevel 1 (
-    echo   [提示] 模型下载失败，可稍后手动跑下面这行（不影响基础功能）：
+    echo   [提示] small 模型下载失败，可稍后手动重试：
     echo   set HF_ENDPOINT=https://hf-mirror.com ^& huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
+) else (
+    echo   small 模型下载完成
+)
+
+:: 模型 B：base（内存紧张时使用，~0.6GB）— 低内存机器/并行 ASR 时自动切换
+echo.
+echo   下载模型 B：faster-whisper-base（内存紧张时使用，约 0.6GB）
+echo     适用场景：内存 < 8GB 或运行其他应用时，ASR 自动切换到此模型
+echo     相比 small 精度略低，但内存占用仅 1/3，速度更快
+huggingface-cli download Systran/faster-whisper-base --local-dir models/faster-whisper-base
+if errorlevel 1 (
+    echo   [提示] base 模型下载失败，可稍后手动重试：
+    echo   set HF_ENDPOINT=https://hf-mirror.com ^& huggingface-cli download Systran/faster-whisper-base --local-dir models/faster-whisper-base
+) else (
+    echo   base 模型下载完成
+)
+
+:: 检测结果摘要
+echo.
+if !AVAIL_GB! GEQ 8 (
+    echo   [建议] 内存充足（!AVAIL_GB!GB），默认使用 small 模型即可获得最佳效果。
+    echo         运行 ASR 时会自动检测可用内存，紧张时降级到 base 模型。
+) else (
+    echo   [建议] 内存较紧张（!AVAIL_GB!GB），ASR 会优先使用 base 模型。
+    echo         如需更好识别精度，可关闭其他应用后再试 small 模型。
 )
 echo.
 

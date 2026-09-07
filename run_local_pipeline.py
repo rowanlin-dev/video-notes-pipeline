@@ -5,11 +5,16 @@
 ================================
 对本地视频文件做 ASR + 抽帧 + 笔记生成，无需 B 站下载。
 
+脑图模式自动启用：时长 ≥30min 自动跳过截图流程，只做 ASR + 纯文本笔记 + Mermaid 图。
+可用 --brain-map / --no-brain-map 覆盖。
+
 用法：
   python run_local_pipeline.py --video /path/to/video.mp4
   python run_local_pipeline.py --video /path/to/video.mp4 --title "自定义标题"
   python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25
   python run_local_pipeline.py --video /path/to/long_lecture.mp4 --parallel-asr --asr-workers 4
+  python run_local_pipeline.py --video /path/to/short.mp4 --brain-map          # 强制脑图（跳过截图）
+  python run_local_pipeline.py --video /path/to/long.mp4 --no-brain-map        # 强制截图（长视频也做截图）
 
 依赖：
   pip install faster-whisper av
@@ -46,8 +51,8 @@ def load_env():
 
 def safe_name(s: str, limit=60) -> str:
     s = re.sub(r'[<>:"/\\|?*\n\r\t]', "_", s or "").strip()
-    s = re.sub(r"\s+", " ", s)
-    return s[:limit].rstrip(" .") or "untitled"
+    s = re.sub(r"\s+", "_", s)
+    return s[:limit].rstrip("_. ") or "untitled"
 
 
 def run(cmd, cwd=None, env=None, step=""):
@@ -92,6 +97,10 @@ def main():
     ap.add_argument("--min-frames", type=int, default=5, help="最少精选帧数")
     ap.add_argument("--max-frames", type=int, default=12, help="精选基础上限")
     ap.add_argument("--hard-max-frames", type=int, default=30, help="精选绝对上限")
+    ap.add_argument("--brain-map", dest="brain_map", action="store_true", default=None,
+                    help="脑图图文模式：跳过抽帧/OCR/打分/精选/文字提取，只做 ASR + 纯文本笔记 + Mermaid 图")
+    ap.add_argument("--no-brain-map", dest="brain_map", action="store_false",
+                    help="强制关闭脑图模式，即使长视频也做截图图文笔记")
     ap.add_argument("--segment-minutes", type=int, default=0,
                     help="长视频切块：每段约多少分钟（<=1 关闭切块，默认关闭）")
     ap.add_argument("--max-segments", type=int, default=12, help="长视频切块最大段数")
@@ -103,10 +112,13 @@ def main():
                     help="强制并行分块 ASR（长视频提速）；默认时长≥30min 自动启用")
     ap.add_argument("--no-parallel-asr", dest="parallel_asr", action="store_false",
                     help="关闭并行 ASR，强制单进程（与原版一致）")
-    ap.add_argument("--asr-workers", type=int, default=4,
-                    help="并行 ASR 进程数（默认 4，低内存机器降到 2）")
-    ap.add_argument("--asr-chunk-minutes", type=int, default=15,
-                    help="并行 ASR 每块分钟数（默认 15，越小越省内存）")
+    ap.add_argument("--asr-workers", type=int, default=None,
+                    help="并行 ASR 进程数（默认 auto，根据 CPU/内存自适应）")
+    ap.add_argument("--asr-chunk-minutes", type=int, default=None,
+                    help="并行 ASR 每块分钟数（默认 auto，根据内存自适应）")
+    ap.add_argument("--asr-model-size", type=str, default=None,
+                    choices=["tiny", "base", "small"],
+                    help="ASR 模型尺寸（默认 auto，根据内存自适应）")
     args = ap.parse_args()
 
     load_env()
@@ -125,34 +137,52 @@ def main():
     final_dir = run_dir / "final"
     out_dir = run_dir / "output"
     img_dir = out_dir / "images"
-    for d in [run_dir, scene_dir, selected_dir, final_dir, out_dir, img_dir]:
-        d.mkdir(parents=True, exist_ok=True)
 
-    env = os.environ.copy()
-    # 优先使用 WinGet 安装的「完整版」Gyan.FFmpeg（TRAE 等 IDE 自带精简版缺音频编码器）。
-    # 找不到则回退 PATH 上的 ffmpeg（Windows/Mac/Linux 通用），不在别的机器上崩。
+    # 先解析 ffmpeg/ffprobe 路径（时长检测需要 ffprobe）
     full_ffmpeg_dir = _resolve_full_ffmpeg()
     if full_ffmpeg_dir is not None:
-        env["PATH"] = str(full_ffmpeg_dir) + os.pathsep + env.get("PATH", "")
         ffmpeg_bin = str(full_ffmpeg_dir / "ffmpeg.exe")
         ffprobe_bin = str(full_ffmpeg_dir / "ffprobe.exe")
-        print(f"[pipeline] 使用完整版 ffmpeg：{ffmpeg_bin}")
     else:
-        ffmpeg_bin = "ffmpeg"   # 回退 PATH（Windows/Mac/Linux 通用）
+        ffmpeg_bin = "ffmpeg"
         ffprobe_bin = "ffprobe"
-    env["BILI_NOTES_WORKSPACE"] = str(run_dir)
-    env["BILI_NOTES_FRAMES"] = str(run_dir)
-    env["PYTHONIOENCODING"] = "utf-8"
-    env["LEARNED_TRASH_FILE"] = ""       # 本地视频禁用自进化黑名单，避免跨视频误杀
-    env["HASH_THRESHOLD"] = "20"         # 适当提高哈希去重阈值，保留更多帧
 
-    # 本地视频直接使用原始文件，不再复制到工作目录
-    # （避免大文件二次占用磁盘空间与拷贝耗时；源文件不会被修改，可安全直读）
     video_ws = video_path
     duration = get_video_duration(str(video_ws), ffprobe_bin)
     print(f"[pipeline] 视频时长：{duration:.0f}s ({duration/60:.1f}min)")
     print(f"[pipeline] 标题：{title}")
     print(f"[pipeline] 工作目录：{run_dir}")
+
+    # 脑图模式自动检测：长视频(>30min)自动启用，可用 --brain-map / --no-brain-map 覆盖
+    brain_map = args.brain_map
+    if brain_map is None:
+        brain_map = duration >= 1800
+        if brain_map:
+            print(f"[pipeline] 视频 >30min，自动启用脑图模式（跳过截图流程，只做 ASR + 笔记 + Mermaid 图）")
+    else:
+        print(f"[pipeline] 脑图模式={'启用' if brain_map else '关闭'}（截图流程={'跳过' if brain_map else '执行'}）")
+
+    # 脑图模式只创建 output 目录，不创建截图目录
+    if brain_map:
+        for d in [run_dir, out_dir, img_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+    else:
+        for d in [run_dir, scene_dir, selected_dir, final_dir, out_dir, img_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    # 优先使用 WinGet 安装的「完整版」Gyan.FFmpeg（TRAE 等 IDE 自带精简版缺音频编码器）。
+    # 找不到则回退 PATH 上的 ffmpeg（Windows/Mac/Linux 通用），不在别的机器上崩。
+    if full_ffmpeg_dir is not None:
+        env["PATH"] = str(full_ffmpeg_dir) + os.pathsep + env.get("PATH", "")
+        if not ffmpeg_bin.startswith("C:"):
+            ffmpeg_bin = str(full_ffmpeg_dir / "ffmpeg.exe")
+        print(f"[pipeline] 使用完整版 ffmpeg：{ffmpeg_bin}")
+    env["BILI_NOTES_WORKSPACE"] = str(run_dir)
+    env["BILI_NOTES_FRAMES"] = str(run_dir)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["LEARNED_TRASH_FILE"] = ""       # 本地视频禁用自进化黑名单，避免跨视频误杀
+    env["HASH_THRESHOLD"] = "20"         # 适当提高哈希去重阈值，保留更多帧
 
     t0 = time.time()
 
@@ -175,14 +205,20 @@ def main():
             # ASR 转写：长视频自动并行分块（默认≥30min），可用 flag 强制启用/关闭
             use_parallel = args.parallel_asr if args.parallel_asr is not None else (duration >= 1800)
             if use_parallel:
-                print(f"  长视频（{duration / 60:.0f}min）→ 并行分块 ASR（{args.asr_workers} 进程 × {args.asr_chunk_minutes}min/块）")
                 asr_cmd = [PY, str(SCRIPTS / "run_asr_parallel.py"), str(audio_wav),
-                           str(sub_json), str(sub_txt),
-                           "--workers", str(args.asr_workers),
-                           "--chunk-minutes", str(args.asr_chunk_minutes)]
+                           str(sub_json), str(sub_txt)]
+                if args.asr_workers is not None:
+                    asr_cmd += ["--workers", str(args.asr_workers)]
+                if args.asr_chunk_minutes is not None:
+                    asr_cmd += ["--chunk-minutes", str(args.asr_chunk_minutes)]
+                if args.asr_model_size is not None:
+                    asr_cmd += ["--model-size", args.asr_model_size]
+                print(f"  长视频（{duration / 60:.0f}min）→ 并行分块 ASR（内存自适应）")
             else:
                 asr_cmd = [PY, str(SCRIPTS / "asr_subtitle.py"),
                            str(audio_wav), str(sub_json), str(sub_txt)]
+                if args.asr_model_size is not None:
+                    os.environ["ASR_MODEL_SIZE"] = args.asr_model_size
             subprocess.run(asr_cmd, check=True, env=env)
             print(f"  ASR 字幕已生成：{sub_json}")
 
@@ -193,93 +229,91 @@ def main():
         else:
             print(f"  字幕已存在，跳过 ASR")
 
-    # ---- Step 1b: 抽帧 ----
-    if args.from_step <= 1:
-        existing_frames = sorted(glob.glob(str(scene_dir / "frame_*.jpg")))
-        if not existing_frames:
-            print(f"\n{'=' * 62}")
-            print(">> Step 1b/6  抽帧")
-            print(f"{'=' * 62}")
-            timestamps = list(range(0, int(duration), args.interval))
-            print(f"  {len(timestamps)} frames at {args.interval}s intervals")
+    # ---- 脑图模式：跳过截图流程 ----
+    if brain_map:
+        print(f"[pipeline] 脑图模式：跳过抽帧 → OCR → 打分 → 精选 → 文字提取")
+        n_raw = n_sel = n_final = 0
+        scores_json = run_dir / "vision_scores.json"
+        extract_json = run_dir / "vision_extract.json"
+    else:
+        # ---- Step 1b: 抽帧 ----
+        if args.from_step <= 1:
+            existing_frames = sorted(glob.glob(str(scene_dir / "frame_*.jpg")))
+            if not existing_frames:
+                print(f"\n{'=' * 62}")
+                print(">> Step 1b/6  抽帧")
+                print(f"{'=' * 62}")
+                timestamps = list(range(0, int(duration), args.interval))
+                print(f"  {len(timestamps)} frames at {args.interval}s intervals")
 
-            container = av.open(str(video_ws))
-            stream = container.streams.video[0]
-            fc = 0
-            for ts in timestamps:
-                # 指定 stream 时，av_seek_frame 的时间戳以「流时基」为单位，
-                # 需把「秒」换算成流时间戳（ts / stream.time_base）；
-                # 流时基缺失（极端情况）时回退到微秒（AV_TIME_BASE = 1e6）。
-                # 注意：旧写法 int(ts * av.time_base) 会把秒除以 1e6，几乎恒为 0，
-                # 导致所有帧都 seek 到视频开头同一帧。
-                if stream.time_base:
-                    seek_ts = int(ts / stream.time_base)
-                else:
-                    seek_ts = int(ts * 1_000_000)
-                # seek 到最近的关键帧（默认 seek 到 PTS >= seek_ts 的关键帧）
-                container.seek(seek_ts, stream=stream)
-                # 关键帧可能远早于目标时间戳（尤其屏幕录制视频 GOP 很长），
-                # 需要继续解码直到到达目标时间戳，否则所有帧都取到同一个关键帧。
-                for frame in container.decode(video=0):
-                    # frame.time 是帧的显示时间（秒），尚未到达目标则跳过继续解码
-                    if frame.time is not None and frame.time < ts - 0.05:
-                        continue
-                    img = frame.to_image()
-                    out = scene_dir / f"frame_{fc+1:04d}_{ts//60:02d}m{ts%60:02d}s.jpg"
-                    img.save(str(out), "JPEG", quality=85)
-                    fc += 1
-                    break
-            container.close()
-            print(f"  提取 {fc} 帧")
-        else:
-            print(f"  {len(existing_frames)} 帧已存在，跳过抽帧")
+                container = av.open(str(video_ws))
+                stream = container.streams.video[0]
+                fc = 0
+                for ts in timestamps:
+                    if stream.time_base:
+                        seek_ts = int(ts / stream.time_base)
+                    else:
+                        seek_ts = int(ts * 1_000_000)
+                    container.seek(seek_ts, stream=stream)
+                    for frame in container.decode(video=0):
+                        if frame.time is not None and frame.time < ts - 0.05:
+                            continue
+                        img = frame.to_image()
+                        out = scene_dir / f"frame_{fc+1:04d}_{ts//60:02d}m{ts%60:02d}s.jpg"
+                        img.save(str(out), "JPEG", quality=85)
+                        fc += 1
+                        break
+                container.close()
+                print(f"  提取 {fc} 帧")
+            else:
+                print(f"  {len(existing_frames)} 帧已存在，跳过抽帧")
 
-    n_raw = len(list(scene_dir.glob("frame_*.jpg")))
-    print(f"[pipeline] 原始帧：{n_raw}")
+        n_raw = len(list(scene_dir.glob("frame_*.jpg")))
+        print(f"[pipeline] 原始帧：{n_raw}")
 
-    # ---- Step 2: OCR 预筛 + 去重 ----
-    if args.from_step <= 2:
-        run([PY, SCRIPTS / "smart_select.py", scene_dir,
-             "--output-dir", selected_dir, "--workspace", run_dir],
-            env=env, step="Step 2/6  OCR 预筛 + 感知哈希去重")
+        # ---- Step 2: OCR 预筛 + 去重 ----
+        if args.from_step <= 2:
+            run([PY, SCRIPTS / "smart_select.py", scene_dir,
+                 "--output-dir", selected_dir, "--workspace", run_dir],
+                env=env, step="Step 2/6  OCR 预筛 + 感知哈希去重")
 
-    n_sel = len(list(selected_dir.glob("*.jpg")))
-    print(f"[pipeline] 去重后：{n_sel}")
+        n_sel = len(list(selected_dir.glob("*.jpg")))
+        print(f"[pipeline] 去重后：{n_sel}")
 
-    if n_sel == 0:
-        print("[warn] 没有帧通过去重，跳过后续帧处理步骤")
+        if n_sel == 0:
+            print("[warn] 没有帧通过去重，跳过后续帧处理步骤")
 
-    scores_json = run_dir / "vision_scores.json"
-    extract_json = run_dir / "vision_extract.json"
+        scores_json = run_dir / "vision_scores.json"
+        extract_json = run_dir / "vision_extract.json"
 
-    # ---- Step 3: 视觉打分 ----
-    if args.from_step <= 3 and n_sel > 0:
-        run([PY, SCRIPTS / "score_frames_concurrent.py",
-             "--frames", selected_dir, "--output", scores_json, "--mode", "score"],
-            env=env, step="Step 3/6  多模态视觉打分")
-
-    # ---- Step 4: 自动精选 ----
-    if args.from_step <= 4 and n_sel > 0:
-        select_cmd = [PY, ROOT / "auto_select.py",
-                      "--scores", scores_json, "--selected-dir", selected_dir,
-                      "--final-dir", final_dir,
-                      "--min", str(args.min_frames), "--max", str(args.max_frames),
-                      "--hard-max", str(args.hard_max_frames)]
-        select_cmd += ["--min-score", os.getenv("FRAME_MIN_SCORE", "3")]
-        select_cmd += ["--learned-trash", ""]  # 显式禁用自进化黑名单
-        run(select_cmd, env=env, step="Step 4/6  按分数 + 主题多样性自动精选")
-
-    n_final = len(list(final_dir.glob("*.jpg")))
-    print(f"[pipeline] 精选帧：{n_final}")
-
-    # ---- Step 5: 图内文字提取 ----
-    if args.from_step <= 5 and n_final > 0:
-        try:
+        # ---- Step 3: 视觉打分 ----
+        if args.from_step <= 3 and n_sel > 0:
             run([PY, SCRIPTS / "score_frames_concurrent.py",
-                 "--frames", final_dir, "--output", extract_json, "--mode", "extract"],
-                env=env, step="Step 5/6  提取图中文字/公式/流程")
-        except SystemExit:
-            print("[warn] 图内文字提取部分失败，继续生成笔记")
+                 "--frames", selected_dir, "--output", scores_json, "--mode", "score"],
+                env=env, step="Step 3/6  多模态视觉打分")
+
+        # ---- Step 4: 自动精选 ----
+        if args.from_step <= 4 and n_sel > 0:
+            select_cmd = [PY, ROOT / "auto_select.py",
+                          "--scores", scores_json, "--selected-dir", selected_dir,
+                          "--final-dir", final_dir,
+                          "--min", str(args.min_frames), "--max", str(args.max_frames),
+                          "--hard-max", str(args.hard_max_frames)]
+            select_cmd += ["--min-score", os.getenv("FRAME_MIN_SCORE", "3")]
+            select_cmd += ["--learned-trash", ""]  # 显式禁用自进化黑名单
+            run(select_cmd, env=env, step="Step 4/6  按分数 + 主题多样性自动精选")
+
+        n_final = len(list(final_dir.glob("*.jpg")))
+        print(f"[pipeline] 精选帧：{n_final}")
+
+        # ---- Step 5: 图内文字提取 ----
+        if args.from_step <= 5 and n_final > 0:
+            try:
+                run([PY, SCRIPTS / "score_frames_concurrent.py",
+                     "--frames", final_dir, "--output", extract_json, "--mode", "extract"],
+                    env=env, step="Step 5/6  提取图中文字/公式/流程")
+            except SystemExit:
+                print("[warn] 图内文字提取部分失败，继续生成笔记")
 
     # ---- Step 6: 生成 MD + PDF ----
     if args.from_step <= 6:
@@ -320,6 +354,25 @@ def main():
             print(f"    python md2pdf.py --input {note_md}")
             print(f"{'=' * 62}")
             return  # 跳过 PDF 与 ima 上传，交由 Agent 完成笔记
+
+        # 提取 Mermaid 代码块 → 渲染 SVG → 宽高比后处理
+        mermaid_dir = out_dir / "mermaid"
+        mermaid_dir.mkdir(parents=True, exist_ok=True)
+        run([PY, SCRIPTS / "extract_mermaid.py",
+             "--note", note_md, "--mermaid-dir", mermaid_dir,
+             "--img-prefix", "images"],
+            env=env, step="  Mermaid 代码块提取")
+        if list(mermaid_dir.glob("*.mmd")):
+            run([PY, SCRIPTS / "render_mermaid.py",
+                 "--mermaid-dir", mermaid_dir, "--images-dir", img_dir],
+                env=env, step="  Mermaid 渲染")
+            # 横向链式图 → 矩形布局（6+ 节点的 flowchart LR 自动转换）
+            run([PY, SCRIPTS / "rectangular_layout.py",
+                 "--mermaid-dir", mermaid_dir, "--images-dir", img_dir],
+                env=env, step="  横向链式图 → 矩形布局")
+        if list(img_dir.glob("*.svg")):
+            run([PY, SCRIPTS / "svg_padder.py", "--dir", img_dir],
+                env=env, step="  SVG 宽高比后处理")
 
         # 生成 PDF
         run([PY, ROOT / "md2pdf.py", "--input", note_md],

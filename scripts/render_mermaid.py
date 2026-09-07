@@ -83,7 +83,7 @@ def main():
 
     print(f"\n完成: {ok}/{len(mmd_files)}")
     if ok < len(mmd_files):
-        sys.exit(1)
+        print(f"  [warn] {len(mmd_files) - ok} 个文件渲染失败，继续后续处理")
 
 
 if __name__ == "__main__":
