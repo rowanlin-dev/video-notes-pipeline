@@ -58,3 +58,9 @@ Thumbs.db
 
 # 损坏仓库备份（rebuild 时重命名，非项目内容）
 .git.bak/
+
+# 本地调试 / 沙盒残留（不入库，避免误提交）
+_deliver_anim/
+_verify_tab_sim.py
+scripts/_ts_backup/
+scripts/wait_asr.py

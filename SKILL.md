@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.3.0
+version: 1.3.1
 description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
@@ -61,6 +61,45 @@ triggers:
 - **B. 无空挡就接受遮挡**：直接在 PPT 页代表时刻全帧截图，字幕挡住就挡吧——比裁掉内容好。
 
 烧录硬字幕 PPT 视频用 `--slidegap`：把场景阈值从 0.04 提到 ~0.1，字幕闪变分值都 <0.1、真实翻页 ≥0.1，得到干净「一页一帧」，全程无 crop。连续旁白视频字幕首尾相接几乎无空挡时，按 B 接受遮挡即可。
+
+## 抽帧模式（`--mode scene` / `--mode fixed`）
+
+`--mode` 控制 Step 1 的抽帧策略，默认 `scene`：
+
+- **`scene`（默认）**：场景切换检测，把画面连续变化合并成关键帧，适合课件 / PPT / 大部分教学视频。
+- **`fixed`**：固定间隔抽帧（每 `--interval N` 秒一张，抽到 `fixed/` 目录），跳过场景检测。适合：
+  - 纯口播 / 画面几乎不变的视频（scene 会把全程合并成 1 帧，丢失内容）
+  - 想要可预测的均匀帧（如每 20 秒一张）
+  - 操作类 / 实操类视频想保证每个步骤段都有代表帧
+
+```bash
+# 课件/PPT 类（默认 scene 即可）
+python run_pipeline.py BV1xx411c7mD --mode fixed --interval 20
+```
+
+## 时间戳跳转到原视频（`--source-url`）
+
+笔记里每张图的时间戳默认是纯文本（如 `12:34`）。提供原视频链接后，时间戳会变成可点击链接，点一下在新标签页跳到对应时间点：
+
+- B 站视频：链接自动拼成 `https://www.bilibili.com/video/<BV>?t=<秒>`（`?` 后接分 P 用 `&p=N`）
+- 通用链接：拼成 `<URL>#t=<秒>`（支持本地 / 任意平台视频）
+
+```bash
+# B 站：加 --source-url 让时间戳可跳转
+python run_pipeline.py BV1xx411c7mD --source-url "https://www.bilibili.com/video/BV1xx411c7mD"
+
+# 本地视频：同样支持（跳转到本地文件对应的时间点）
+python run_local_pipeline.py --video /path/to/video.mp4 --source-url "https://www.bilibili.com/video/BVxxxx"
+```
+
+> **重要**：本地视频**不提供** `--source-url` 时，不再生成打不开的假 B 站链接，只输出纯文本时间戳（避免读者点链接 404）。
+
+**存量笔记回填**：已生成的 `.md` 时间戳可用 `scripts/fix_bili_timestamps.py` 批量转成可点击链接（支持图注单点 / 标题区间 / 时间节点行 / 表格时间段四种格式，已转换的不会重复处理）：
+
+```bash
+# 给某篇笔记的第 N 分P 回填 B 站跳转链接
+python scripts/fix_bili_timestamps.py runs/BV1xx411c7mD_p1/output/标题.md 1 --bvid BV1xx411c7mD
+```
 
 ## 安装（首次 / 跨平台，国内镜像兜底）
 
@@ -425,7 +464,7 @@ runs/<video>_p1/output/
 
 ## 关键规则
 
-- **抽帧默认 `--mode scene`**（场景切换检测，适合课件/PPT），不要用旧的 `--mode cover` 全覆盖；操作类改用 `--threshold 0.02 --merge-gap 1.5`
+- **抽帧默认 `--mode scene`**（场景切换检测，适合课件/PPT）；纯口播/画面几乎不变或想要均匀间隔帧用 `--mode fixed --interval N`（固定间隔，跳过场景检测）；操作类改用 `--threshold 0.02 --merge-gap 1.5`
 - **烧录硬字幕 PPT 视频用 `--slidegap`**：字幕合成在画面里、无独立字幕轨，抽帧落在翻页空挡、避开字幕遮挡；**禁止用 ffmpeg `crop` 裁掉字幕区域（会一起裁掉内容）**，无空挡就接受遮挡
 - **选帧全自动**：`auto_select.py` 按分数 + 主题多样性精选到 `final/`，无需人工 `cp` 挑选帧
 - **所有视觉分析走 `score_frames_concurrent.py`**（score / extract 两种模式），不要串行逐帧调用

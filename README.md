@@ -76,7 +76,7 @@
 - 🧠 **AI 视觉打分**，选出每个知识点最完整的一帧
 - 🧹 **垃圾帧过滤**：自动剔除「求三连 / 片头广告 / 求赞」等无信息量帧（见下方重点配置）
 - 🔗 **自动补充外部资料**：视频提到 GitHub / 博客 / 官网等来源时，自动抓取并补充权威说明到笔记（抓取前提示开代理，连不上则只补链接）
-- 📝 **融合字幕 + 截图内容**生成 Markdown + PDF 笔记，每张图带可点击时间戳
+- 📝 **融合字幕 + 截图内容**生成 Markdown + PDF 笔记，每张图带时间戳（提供 `--source-url` 后变为可点击链接，跳转到原视频对应时间点）
 - 🎞️ **烧录字幕 PPT 视频优化**：新增 `--slidegap` 模式，专治「字幕烧录在画面里、无独立字幕轨」的一页一页 PPT 视频——用字幕时间轴空挡或翻页瞬间截图，避免字幕遮挡内容
 - 🤫 **无字幕自动 ASR 兜底**：检测不到官方/AI/外挂字幕轨（或字幕串台与内容无关）时，流水线自动调用本地 faster-whisper 转写音频，ASR 保留每句时间戳，空挡截图依旧可用（见「常见坑与对策 §2」）
 - 📚 **可选一键入库 ima** 知识库，按内容自动归档到主题文件夹
@@ -303,6 +303,23 @@ python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25
 **本地视频流水线**：提取音频 → ASR 语音转文字（faster-whisper）→ 定时抽帧 → OCR 预筛 + 哈希去重 → 视觉打分 → 自动精选 → 提取图中文字 → 生成 MD + PDF →（可选）入 ima。
 
 **与 B 站视频的差异**：不需要 Cookie 和网络连接；字幕通过本地 ASR 生成；默认禁用自进化黑名单避免跨视频误杀；哈希去重阈值 20 保留更多帧。输出在 `runs/local_<标题>_p1/output/` 下。
+
+### 时间戳跳转到原视频（--source-url）
+
+提供原视频链接后，笔记里每张图的时间戳会变成可点击链接，点一下跳到对应时间点（B 站拼 `?t=秒`、通用链接拼 `#t=秒`）。本地视频**不提供** `--source-url` 时只输出纯文本时间戳，不会生成打不开的假链接。
+
+```bash
+python run_pipeline.py BV1xx411c7mD --source-url "https://www.bilibili.com/video/BV1xx411c7mD"
+python run_local_pipeline.py --video /path/to/video.mp4 --source-url "https://www.bilibili.com/video/BVxxxx"
+```
+
+**存量笔记回填**：已生成的 `.md` 可用 `scripts/fix_bili_timestamps.py` 批量把时间戳转成可点击链接（支持图注单点 / 标题区间 / 时间节点行 / 表格时间段，已转换的不重复处理）：
+
+```bash
+python scripts/fix_bili_timestamps.py runs/BV1xx411c7mD_p1/output/标题.md 1 --bvid BV1xx411c7mD
+```
+
+**抽帧模式 `--mode fixed`**：默认 `scene`（场景切换检测）。纯口播 / 画面几乎不变、或想要均匀间隔帧时，用 `--mode fixed --interval N`（每 N 秒一张，跳过场景检测），避免 scene 把全程合并成 1 帧丢失内容。
 
 ---
 
@@ -711,6 +728,7 @@ video-notes-pipeline/
 ├── bilibili_cookies.txt.example
 ├── scripts/
 │   ├── extract_frames.py          # 下载 + 抽帧（scene 检测/定时、长视频降级、--no-video）
+│   ├── fix_bili_timestamps.py     # 把存量笔记时间戳批量转成可点击 B 站链接（--source-url 补全工具）
 │   ├── smart_select.py            # OCR 预筛 + 感知哈希去重
 │   ├── score_frames_concurrent.py # 多模态视觉打分 + 图内文字提取
 │   ├── asr_subtitle.py            # 语音转文字(ASR)：本地 faster-whisper 转字幕（缺失/串台时）
@@ -766,6 +784,8 @@ video-notes-pipeline/
 - **长视频专项（已实现）**：针对 1 小时以上的长视频做了两端加固。① **纯字幕模式 `--no-video`**：访谈 / 口播类无需配图，跳过视频下载与抽帧，仅用官方字幕生成纯文字笔记（也彻底规避长视频下载超时）。② **切块生成**：视频时长 > 阈值时 `md_note.py` 自动按时间切片（默认每 25 分钟一段，最多 12 段），每段取自身字幕切片 + 该段帧，按学科模板独立生成一节（`## 第N段` 章节，内部 `###` 小节），最后用一次轻量调用合成全局「内容概要」置于最前，插图全局统一编号——避免把数小时字幕 + 全部帧一次性塞爆模型上下文。③ **下载韧性**：`extract_frames.py` 长视频（>60min）自动降分辨率（720p→480p）减小体积；下载增加断点续传（`--continue`）+ 重试循环（最多 4 次，指数退避），应对 B站 mcdn CDN 偶发超时。此外，**长文笔记务必把文本模型切到 Deepseek**（见上文「模型可切换」说明）——长视频切块后单段仍数千字、整篇常破万，`glm-4-flash` 等免费档在超长上下文下易截断或发散，本项目 `.env` 已默认 `TEXT_MODEL=deepseek-chat`。
 - **烧录字幕 PPT 视频抽帧（v1.0.1 新增）**：`run_pipeline.py --slidegap` 走 `extract_frames.py` 的 `extract_slidegap_frames`——用字幕时间轴空挡或翻页瞬间截图，让字幕不遮挡 PPT；场景检测阈值默认提到 `0.1`（字幕闪变分值均 <0.1，真实翻页 ≥0.1），无需碰裁切画面即可「一页一帧」。**硬性约束：永远禁止「裁剪画面去字幕」**——字幕位置不固定、写死 crop 必裁错，且 PPT 全屏时裁底部会把正文一起切掉，比遮挡更糟；无空挡时直接全帧截图、接受字幕入镜。配套：检测不到字幕轨时 `download_subtitles` 自动调用本地 faster-whisper 兜底（ASR 保留 `from/to` 时间戳，`scripts/asr_subtitle.py` 的 TXT 已统一为 `[MMmSSs]` 格式）。
 - **md2pdf Windows 打印卡死修复（v1.0.1）**：`md2pdf.py` 每次打印改用独立临时 `--user-data-dir`，避开与系统 Edge 配置锁冲突导致的卡死。
+- **可点击时间戳来源链接（`--source-url`，v1.3.0）**：提供原视频链接后每张图时间戳可跳转到对应时间点（B 站 `?t=秒` / 通用 `#t=秒`）；本地视频未提供时不生成打不开的假链接，只输出纯文本时间戳。配套 `scripts/fix_bili_timestamps.py` 可批量把存量笔记时间戳回填成可点击链接。
+- **固定间隔抽帧模式（`--mode fixed`，v1.3.0）**：跳过场景切换检测、按 `--interval` 秒定间隔抽帧，适配纯口播 / 画面几乎不变 / 想要均匀帧的视频（scene 会把全程合并成 1 帧丢失内容）。
 
 ### 依赖许可证
 

@@ -1,8 +1,8 @@
-# Bilibili Video Notes（工具入口 · v1.3.0）
+# Bilibili Video Notes（工具入口 · v1.3.1）
 
 从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
 
-> 当前版本 **v1.3.0**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
+> 当前版本 **v1.3.1**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
 
 完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
@@ -29,6 +29,12 @@ python run_pipeline.py BV1hD42137sx --threshold 0.02 --merge-gap 1.5
 
 # 断点续跑
 python run_pipeline.py BV1xx411c7mD --from-step 4
+
+# 纯口播/画面不变：固定间隔抽帧（跳过场景检测）
+python run_pipeline.py BV1xx411c7mD --mode fixed --interval 60
+
+# 让笔记时间戳可跳转到原视频
+python run_pipeline.py BV1xx411c7mD --source-url "https://www.bilibili.com/video/BV1xx411c7mD"
 ```
 
 输出在 `runs/<BV>_p<N>/output/`。更多参数见 SKILL.md。
@@ -41,6 +47,7 @@ python run_pipeline.py BV1xx411c7mD --from-step 4
 python run_local_pipeline.py --video /path/to/video.mp4
 python run_local_pipeline.py --video /path/to/video.mp4 --title "自定义标题"
 python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25   # 长视频切块
+python run_local_pipeline.py --video /path/to/video.mp4 --source-url "https://www.bilibili.com/video/BVxxxx"   # 时间戳可跳转原视频
 ```
 
 流程：提取音频 → 本地 ASR（faster-whisper）转文字 → 定时抽帧（PyAV）→ OCR 去重 → 视觉打分 → 自动精选 → 生成 MD + PDF →（可选）入 ima。
