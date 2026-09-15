@@ -12,37 +12,50 @@ Mermaid .mmd → SVG 通用渲染器（mermaid.ink API）
 """
 import base64
 import argparse
+import re
 import sys
 import zlib
 from pathlib import Path
 from urllib.request import urlopen, Request
 
 
+def _quote_url_nodes(text: str) -> str:
+    """mermaid.ink 对节点文本中的 URL（含 :// 未加引号）返回 400，自动补引号兜底。"""
+    return re.sub(r"\[([^\[\]\"']*://[^\[\]]*)\]", r'["\1"]', text)
+
+
 def render(mmd_path: Path, svg_path: Path) -> bool:
     text = mmd_path.read_text(encoding="utf-8").strip()
-    raw = text.encode("utf-8")
 
-    strategies = [
-        ("b64+urlencode", lambda: base64.urlsafe_b64encode(raw).decode("ascii")),
-    ]
-    if len(raw) > 50:
-        strategies.append((
-            "zlib+b64",
-            lambda: base64.urlsafe_b64encode(zlib.compress(raw)[2:-4]).decode("ascii"),
-        ))
+    variants = [text]
+    fixed = _quote_url_nodes(text)
+    if fixed != text:
+        variants.append(fixed)
 
-    for name, encoder in strategies:
-        try:
-            encoded = encoder()
-            url = f"https://mermaid.ink/svg/{encoded}"
-            req = Request(url, headers={"User-Agent": "video-notes-pipeline/1.0"})
-            with urlopen(req, timeout=30) as resp:
-                svg = resp.read().decode("utf-8")
-                svg_path.write_text(svg, encoding="utf-8")
-                print(f"  [ok] {mmd_path.name} ({name})")
-                return True
-        except Exception:
-            continue
+    for text in variants:
+        raw = text.encode("utf-8")
+
+        strategies = [
+            ("b64+urlencode", lambda: base64.urlsafe_b64encode(raw).decode("ascii")),
+        ]
+        if len(raw) > 50:
+            strategies.append((
+                "zlib+b64",
+                lambda: base64.urlsafe_b64encode(zlib.compress(raw)[2:-4]).decode("ascii"),
+            ))
+
+        for name, encoder in strategies:
+            try:
+                encoded = encoder()
+                url = f"https://mermaid.ink/svg/{encoded}"
+                req = Request(url, headers={"User-Agent": "video-notes-pipeline/1.0"})
+                with urlopen(req, timeout=30) as resp:
+                    svg = resp.read().decode("utf-8")
+                    svg_path.write_text(svg, encoding="utf-8")
+                    print(f"  [ok] {mmd_path.name} ({name})")
+                    return True
+            except Exception:
+                continue
 
     print(f"  [error] {mmd_path.name} -> 所有策略均失败", file=sys.stderr)
     return False

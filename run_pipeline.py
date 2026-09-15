@@ -182,6 +182,7 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
     run_dir.mkdir(parents=True, exist_ok=True)
     frames_root = run_dir
     scene_dir = run_dir / "scene"
+    fixed_dir = run_dir / "fixed"
     selected_dir = run_dir / "selected"
     final_dir = run_dir / "final"
     out_dir = run_dir / "output"
@@ -251,11 +252,14 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
         run(cmd, env=env, step=f"Step 1/7  [P{page}] 抽帧 + 下载官方AI字幕")
 
     n_raw = len(list(scene_dir.glob("frame_*.jpg"))) if scene_dir.exists() else 0
+    if args.mode == "fixed":
+        n_raw = len(list(fixed_dir.glob("frame_*.jpg"))) if fixed_dir.exists() else 0
     print(f"[pipeline] 原始帧：{n_raw}")
 
     # ---- Step 2 OCR 预筛 + 去重
     if not args.no_video and args.from_step <= 2 <= args.to_step:
-        run([PY, SCRIPTS / "smart_select.py", scene_dir,
+        frames_input = fixed_dir if args.mode == "fixed" else scene_dir
+        run([PY, SCRIPTS / "smart_select.py", frames_input,
              "--output-dir", selected_dir, "--workspace", run_dir],
             env=env, step=f"Step 2/7  [P{page}] OCR预筛 + 感知哈希去重")
 

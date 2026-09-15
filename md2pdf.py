@@ -51,6 +51,10 @@ img { max-width: 100%; display: inline-block; border: 1px solid #ddd; border-rad
 .img-square img { max-width: 75%; }
 .img-landscape img { max-width: 100%; }
 div[align="center"] { text-align: center; font-size: 9.5pt; color: #666; margin-bottom: 16px; }
+.img-wrap svg { max-width: 90%; height: auto; display: inline-block; border: 1px solid #ddd; border-radius: 3px; }
+.img-portrait svg { max-width: 50%; }
+.img-square svg { max-width: 70%; }
+.img-landscape svg { max-width: 90%; }
 a { color: #4a6fa5; text-decoration: none; }
 code { background: #f2f2f2; padding: 1px 5px; border-radius: 3px; font-size: 10pt; }
 pre { background: #f7f7f7; padding: 10px 12px; border-radius: 4px; overflow-x: auto; }
@@ -86,7 +90,7 @@ def _parse_viewbox(svg_text: str):
 
 
 def _classify_svg_images(html: str, base_dir: Path) -> str:
-    """对 SVG 图片按宽高比分类，加外层 div 和 CSS 类"""
+    """对 SVG 图片按宽高比分类，内联 SVG 内容到 HTML（避免 <img> 沙箱导致 PDF 渲染异常）"""
     def _wrap(m):
         src = m.group(1)
         img_tag = m.group(0)
@@ -107,7 +111,7 @@ def _classify_svg_images(html: str, base_dir: Path) -> str:
             cls = "img-landscape"
         else:
             cls = "img-square"
-        return f'<div class="img-wrap {cls}">{img_tag}</div>'
+        return f'<div class="img-wrap {cls}">{svg_text}</div>'
     return re.sub(r'<img[^>]+src="([^"]+\.svg)"[^>]*>', _wrap, html, flags=re.IGNORECASE)
 
 

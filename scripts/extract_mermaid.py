@@ -90,6 +90,15 @@ def main():
     for start, end, tag in sorted(replacements, key=lambda x: x[0], reverse=True):
         md_text = md_text[:start] + "\n" + tag + "\n" + md_text[end:]
 
+    # 清除 LLM 生成的虚假图片占位符（![图 N xxx](images/图_N_xxx.svg)）
+    # 这些占位符引用的文件名与实际 SVG 不匹配，实际 SVG 已由上方 <img> 标签引用
+    orphan_pattern = re.compile(r'!\[图\s+\d+\s+[^\]]*\]\(images/图_\d+_[^)]+\.svg\)')
+    orphan_count = len(orphan_pattern.findall(md_text))
+    if orphan_count:
+        md_text = orphan_pattern.sub("", md_text)
+        md_text = re.sub(r'\n{3,}', '\n\n', md_text)
+        print(f"\n清除 {orphan_count} 个虚假图片占位符（LLM 生成的文件名不匹配）")
+
     note_path.write_text(md_text, encoding="utf-8")
     print(f"\n已更新: {note_path}")
     print(f"  Mermaid 文件: {mermaid_dir}/")

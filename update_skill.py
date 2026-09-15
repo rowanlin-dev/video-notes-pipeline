@@ -73,6 +73,7 @@ UPSTREAM_FILES = [
     "scripts/run_asr_direct.py",
     "scripts/clean_markdown_bold.py",
     "scripts/extract_frames.py",
+    "scripts/fix_bili_timestamps.py",
     "scripts/extract_key_sentences.py",
     "scripts/fetch_comments.py",
     "scripts/fix_subtitles.py",

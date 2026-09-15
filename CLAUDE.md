@@ -2,7 +2,7 @@
 
 Turn Bilibili educational videos into illustrated **Markdown + PDF** notes with clickable timestamps, optionally archived into the ima knowledge base.
 
-> Current version **v1.2.0**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
+> Current version **v1.3.0**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
 
 See **SKILL.md** for the full reference. This file is a quick-start for AI agents/collaborators.
 

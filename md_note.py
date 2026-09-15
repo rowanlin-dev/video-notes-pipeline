@@ -71,7 +71,7 @@ def frame_index(name: str) -> int:
 
 
 # ---------------------------------------------------------------- 数据装载
-def load_frames(final_dir, origin_map_path, extract_json, scores_json, interval, bvid, page):
+def load_frames(final_dir, origin_map_path, extract_json, scores_json, interval, bvid, page, source_url=""):
     """汇总每一帧的：文件名、时间戳、主题、关键词、图内文字。"""
     origin_map = {}
     if origin_map_path and Path(origin_map_path).exists():
@@ -96,12 +96,20 @@ def load_frames(final_dir, origin_map_path, extract_json, scores_json, interval,
         sec = parse_ts(origin_map.get(name, name), idx, interval)
         info = extracted.get(name, {}) or {}
         sinfo = scores.get(name, {}) or {}
+        # 时间戳跳转链接：优先用用户提供的原视频在线链接（B 站分享链接 + t=秒数）；
+        # 未提供时 B 站视频用 bvid 拼链接，本地视频不生成链接（避免打开无内容的假链接）
+        url = ""
+        if source_url:
+            sep = "&" if "?" in source_url else "?"
+            url = f"{source_url}{sep}t={sec}"
+        elif not bvid.startswith("local_"):
+            url = f"https://www.bilibili.com/video/{bvid}/?p={page}&t={sec}"
         frames.append({
             "file": name,
             "path": str(img),
             "seconds": sec,
             "timestamp": fmt_ts(sec),
-            "url": f"https://www.bilibili.com/video/{bvid}/?p={page}&t={sec}",
+            "url": url,
             "theme": info.get("theme") or sinfo.get("theme") or "",
             "keywords": sinfo.get("keywords") or info.get("keywords") or [],
             "content": (info.get("text") or info.get("content") or
@@ -573,9 +581,12 @@ def inject_frames(body, frames, img_prefix):
         # 编号先占位，等全文组装完再按实际出现顺序统一编号，
         # 否则"兜底补入"的图会带着靠后的编号插在前面，出现图 3 后面跟着图 9。
         # 前后各留空行，保证图片独占一段（模型常把占位符黏在段落末尾）。
-        return (f"\n\n![图 {NO} {cap}]({rel})\n\n"
-                f"<div align=\"center\">图 {NO} {cap} — "
-                f"<a href=\"{f['url']}\" target=\"_blank\" rel=\"noopener noreferrer\">▶ {f['timestamp']}</a></div>\n\n")
+        if f.get("url"):
+            link = (f"<div align=\"center\">图 {NO} {cap} — "
+                    f"<a href=\"{f['url']}\" target=\"_blank\" rel=\"noopener noreferrer\">▶ {f['timestamp']}</a></div>")
+        else:
+            link = f"<div align=\"center\">图 {NO} {cap} — ▶ {f['timestamp']}</div>"
+        return f"\n\n![图 {NO} {cap}]({rel})\n\n{link}\n\n"
 
     order = {f["file"]: f for f in frames}
     counter = [0]
@@ -681,6 +692,9 @@ def main():
     ap = argparse.ArgumentParser(description="生成 Markdown 图文笔记")
     ap.add_argument("--bvid", required=True)
     ap.add_argument("--page", type=int, default=1)
+    ap.add_argument("--source-url", default="",
+                    help="原视频在线链接（如 B 站分享链接）。提供后时间戳链接用该链接+t=秒数跳转；"
+                         "本地视频未提供时输出纯文本时间戳，不生成打开无内容的假链接")
     ap.add_argument("--title", default="")
     ap.add_argument("--final-dir", required=True)
     ap.add_argument("--origin-map", default=None)
@@ -717,7 +731,8 @@ def main():
     args = ap.parse_args()
 
     frames = load_frames(args.final_dir, args.origin_map, args.extract_json,
-                         args.scores_json, args.interval, args.bvid, args.page)
+                         args.scores_json, args.interval, args.bvid, args.page,
+                         args.source_url)
     print(f"[md] 载入 {len(frames)} 帧")
 
     subtitle = load_subtitle(args.subtitle)
@@ -778,12 +793,19 @@ def main():
 
     n_frames = len(frames)
     if n_frames == 0:
+        src = args.bvid if not args.bvid.startswith("local_") else "本地视频"
         header = (f"# {title}\n\n"
-                  f"> 来源：{args.bvid} · P{args.page} · 纯文字笔记（无截图）\n\n---\n\n")
+                  f"> 来源：{src} · P{args.page} · 纯文字笔记（无截图）\n\n---\n\n")
     else:
-        header = (f"# {title}\n\n"
-                  f"> 来源：[{args.bvid}](https://www.bilibili.com/video/{args.bvid}/?p={args.page})"
-                  f" · P{args.page} · 共 {n_frames} 张图解\n\n---\n\n")
+        if args.source_url:
+            src_line = f"> 来源：[{args.bvid}]({args.source_url}) · P{args.page} · 共 {n_frames} 张图解"
+        elif args.bvid.startswith("local_"):
+            src_line = f"> 来源：本地视频 · P{args.page} · 共 {n_frames} 张图解"
+        else:
+            src_line = (f"> 来源：[{args.bvid}]"
+                        f"(https://www.bilibili.com/video/{args.bvid}/?p={args.page})"
+                        f" · P{args.page} · 共 {n_frames} 张图解")
+        header = f"# {title}\n\n{src_line}\n\n---\n\n"
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)

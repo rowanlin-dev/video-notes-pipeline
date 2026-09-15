@@ -93,6 +93,8 @@ def main():
     ap = argparse.ArgumentParser(description="本机视频转图文笔记流水线")
     ap.add_argument("--video", required=True, help="本地视频文件路径")
     ap.add_argument("--title", default=None, help="笔记标题（缺省用文件名）")
+    ap.add_argument("--source-url", default="",
+                    help="原视频在线链接（如 B 站分享链接）。提供后笔记时间戳可点击跳转到原视频对应时间点")
     ap.add_argument("--interval", type=int, default=5, help="抽帧间隔（秒，默认 5）")
     ap.add_argument("--min-frames", type=int, default=5, help="最少精选帧数")
     ap.add_argument("--max-frames", type=int, default=12, help="精选基础上限")
@@ -323,6 +325,7 @@ def main():
         note_md = out_dir / f"{safe_name(title)}.md"
         cmd = [PY, ROOT / "md_note.py",
                "--bvid", bvid, "--page", str(page), "--title", title,
+               "--source-url", args.source_url,
                "--final-dir", final_dir,
                "--origin-map", selected_dir / "_origin_map.json",
                "--extract-json", extract_json,

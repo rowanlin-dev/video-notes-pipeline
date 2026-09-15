@@ -71,6 +71,24 @@ COOKIE_FILE = os.path.join(WORKSPACE, "bilibili_cookies.txt")
 FRAMES_DIR = os.environ.get("BILI_NOTES_FRAMES",
     os.environ.get("BILI_NOTES_WORKSPACE", _default_frames))
 
+
+def _resolve_full_ffmpeg() -> str | None:
+    """定位 WinGet 安装的「完整版」Gyan.FFmpeg（TRAE 等 IDE 自带精简版缺 JPEG 编码器，抽帧会失败）。
+
+    找到返回其 bin/ffmpeg.exe 路径；否则返回 None（调用方回退到 PATH 上的 ffmpeg）。
+    """
+    pkgs = Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
+    if pkgs.is_dir():
+        matches = sorted(pkgs.glob("Gyan.FFmpeg_*/ffmpeg-*-full_build/bin"), reverse=True)
+        for d in matches:
+            exe = d / "ffmpeg.exe"
+            if exe.exists():
+                return str(exe)
+    return None
+
+
+FFMPEG_BIN = _resolve_full_ffmpeg() or "ffmpeg"
+
 # ---- 音频转文本（ASR）兜底所需的本地路径 ----
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(_SCRIPT_DIR)
@@ -467,7 +485,7 @@ def extract_fixed_frames(video_path: str, interval: int = 30) -> list:
     safe_move(os.path.join(out_dir, "*.jpg"))
 
     cmd = [
-        "ffmpeg", "-y", "-i", video_path,
+        FFMPEG_BIN, "-y", "-i", video_path,
         "-vf", f"fps=1/{interval}",
         "-q:v", "2",
         os.path.join(out_dir, "frame_%04d.jpg"),
@@ -505,7 +523,7 @@ def extract_scene_frames(video_path: str, threshold: float = 0.04, merge_gap: fl
 
     # Pass 1: detect scene change timestamps
     cmd = [
-        "ffmpeg", "-y", "-i", video_path,
+        FFMPEG_BIN, "-y", "-i", video_path,
         "-vf", f"select='gt(scene,{threshold})',showinfo",
         "-vsync", "vfr",
         "-q:v", "2",
@@ -558,7 +576,7 @@ def extract_scene_frames(video_path: str, threshold: float = 0.04, merge_gap: fl
     for i, ts in enumerate(key_timestamps):
         out_file = os.path.join(out_dir, f"frame_{i+1:04d}_{seconds_to_time(ts)}.jpg")
         cmd = [
-            "ffmpeg", "-y", "-ss", str(ts),
+            FFMPEG_BIN, "-y", "-ss", str(ts),
             "-i", video_path,
             "-frames:v", "1",
             "-q:v", "2",
@@ -679,7 +697,7 @@ def extract_slidegap_frames(video_path: str, sub_json_path: str = None,
 
     # 全帧场景检测（不裁切任何区域，PPT 翻页是大变化，字幕微变不会主导）
     cmd = [
-        "ffmpeg", "-y", "-i", video_path,
+        FFMPEG_BIN, "-y", "-i", video_path,
         "-vf", f"select='gt(scene,{threshold})',showinfo",
         "-vsync", "vfr", "-q:v", "2",
         os.path.join(out_dir, "raw_%04d.jpg"),
@@ -731,7 +749,7 @@ def extract_slidegap_frames(video_path: str, sub_json_path: str = None,
     for i, ts_sec in enumerate(chosen):
         out_file = os.path.join(out_dir, f"frame_{i+1:04d}_{seconds_to_time(ts_sec)}.jpg")
         # 全帧截图，绝不裁切（规则 B：无空挡时字幕可能入镜，接受遮挡）
-        cmd = ["ffmpeg", "-y", "-ss", str(ts_sec), "-i", video_path,
+        cmd = [FFMPEG_BIN, "-y", "-ss", str(ts_sec), "-i", video_path,
                "-frames:v", "1", "-q:v", "2", out_file]
         subprocess.run(cmd, capture_output=True, check=True)
 
