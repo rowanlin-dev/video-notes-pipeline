@@ -96,20 +96,33 @@ def safe_name(s: str, limit=60) -> str:
 
 
 def _http_get_json(url: str, params: dict) -> dict:
-    """优先 requests，缺失时回退 urllib（仅用于读 B站 view 元数据）。"""
+    """优先 requests，缺失时回退 urllib；两者都被 B站 412 风控拦时退 curl。"""
     headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com"}
+    import urllib.parse
+    qs = urllib.parse.urlencode(params)
     try:
         import requests
         r = requests.get(url, params=params, headers=headers, timeout=15)
-        return r.json()
-    except ImportError:
-        import urllib.parse
-        import urllib.request
-        qs = urllib.parse.urlencode(params)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    import urllib.request
+    import urllib.error
+    import json as _json
+    try:
         req = urllib.request.Request(f"{url}?{qs}", headers=headers)
         with urllib.request.urlopen(req, timeout=15) as resp:
-            import json as _json
             return _json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        import subprocess
+        hdr_args = [h for k, v in headers.items() for h in ("-H", f"{k}: {v}")]
+        out = subprocess.run(["curl", "-s", "--http1.1", "-m", "30",
+                              f"{url}?{qs}"] + hdr_args,
+                             capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError(f"curl fallback failed for {url}: {out.stderr}")
+        return _json.loads(out.stdout)
 
 
 def fetch_view(bvid: str) -> dict:

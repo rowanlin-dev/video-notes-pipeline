@@ -192,7 +192,10 @@ _FRAME_RULE = (
     "- 截图已按时间顺序给出，插入顺序应与之大致一致。"
 )
 _NO_FRAME_NOTE = (
-    "（本视频无配图，需要你生成 Mermaid 图来辅助说明。\n"
+    "（本视频无配图，需要你生成 Mermaid 图来辅助说明。"
+)
+# 脑图生成规则：有截图时也适用的部分（图文并存模式下同样要求）。
+_MINDMAP_RULE = (
     "对于以下内容类型，请生成对应的 Mermaid 代码块（用 ```mermaid 标记）：\n"
     "  - 全局结构/大纲：用 `mindmap` 语法，放在文章最开头（# 标题下方，所有小节之前）\n"
     "  - 各小节结构/大纲：用 `mindmap` 语法，放在该小节标题（## 或 ###）下方，作为该节的概述\n"
@@ -200,12 +203,35 @@ _NO_FRAME_NOTE = (
     "  - 系统架构：用 `flowchart TD`（含 subgraph）\n"
     "  - 时间演进：用 `timeline`\n"
     "  - 分类/集合：用 `flowchart TD` + 子图\n"
-    "Mermaid 代码块必须放在对应内容段落的开头（紧跟标题之后），不要堆在段落末尾或文末。\n"
-    "每个图下方用 `![图 N 描述](images/图_N_描述.svg)` 占位，N 从 1 递增。")
+    "Mermaid 代码块必须放在对应内容段落的开头（紧跟标题之后），不要堆在段落末尾或文末。"
+)
+_MERMAID_PLACEHOLDER_RULE = (
+    "每个图下方用 `![图 N 描述](images/图_N_描述.svg)` 占位，N 从 1 递增。"
+)
+# 无截图时：脑图是唯一视觉元素，要求明确且占位说明必须给全。
+_NO_FRAME_FULL = _NO_FRAME_NOTE + _MINDMAP_RULE + "\n" + _MERMAID_PLACEHOLDER_RULE
+# 有截图时：脑图作为补充，只在内容确实有结构/流程/层级时生成，不强求每节都画。
+_MINDMAP_WITH_FRAME = (
+    "★ 补充要求：在图文穿插之外，再用 Mermaid 图补充说明结构性内容 ★\n"
+    "本视频有截图，因此脑图是**补充**手段而非唯一视觉元素：\n"
+    "- 文章最开头（标题下方、所有小节之前）生成 1 个全局 `mindmap` 大纲图。\n"
+    "- 只有当某小节确实存在流程/层级/架构/时间线关系时，才在该小节标题下补充对应 Mermaid 图；\n"
+    "  纯概念解释、简单罗列的段落**不要**画图。宁可少而精，不要为凑数硬画。\n"
+    + _MINDMAP_RULE.replace("请生成对应的 Mermaid 代码块", "补充对应的 Mermaid 代码块")
+    + "\n" + _MERMAID_PLACEHOLDER_RULE
+    + "\n- 脑图数量控制在 1-4 个，与截图互相补充；截图仍按上面的规则正常穿插。"
+)
 
 
-def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frames, sub_level=2):
+def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frames, sub_level=2,
+                  mind_map=False):
     """按学科模板 + 目标字数拼装笔记生成 prompt（保留图文穿插规则）。
+
+    三种视觉模式：
+      - has_frames=False（有截图=false，无截图）→ 纯脑图文，脑图是唯一视觉元素
+      - has_frames=True 且 mind_map=True       → 图文 + 脑图并存（短视频默认）
+      - has_frames=True 且 mind_map=False      → 纯截图图文（旧行为）
+
     sub_level: 小节标题层级（切块章节内用 3=###，单篇用 2=##）。"""
     h = "#" * sub_level
     role = template.get("role", "你是一名擅长做学习笔记的助手。")
@@ -226,8 +252,11 @@ def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frame
     parts = ["写作要求："]
     if has_frames:
         parts.append(_FRAME_RULE)
+        if mind_map:
+            parts.append(_MINDMAP_WITH_FRAME)
     else:
-        parts.append(_NO_FRAME_NOTE)
+        # 无截图时脑图必须生成（此时不生成就等于没有任何视觉内容）
+        parts.append(_NO_FRAME_FULL)
     parts.append(
         f"结构要求（严格按以下小节组织，每节一个 `{h}` 标题，顺序保持一致）：\n"
         f"{outline_txt}")
@@ -310,7 +339,7 @@ def _brief_frames_list(frames, bvid):
 
 
 def emit_brief(title, bvid, page, frames, subtitle, template, target,
-               entries, segs, args):
+               entries, segs, args, mind_map=False):
     """Agent 原生模式：把笔记生成所需的全部素材 + 写作 SPEC 导出为
     _brief.md（人/Agent 可读）与 _brief.json（结构化），供宿主 Agent 自带模型
     撰写笔记，全程不调用外部 LLM。返回 (brief_md, brief_json) 路径。"""
@@ -342,6 +371,8 @@ def emit_brief(title, bvid, page, frames, subtitle, template, target,
         "subtitle": subtitle,
         "comment_block": comment_text,
         "chunked": len(segs) > 1,
+        "mind_map": bool(mind_map),
+        "mindmap_spec": (_MINDMAP_WITH_FRAME if frames else _NO_FRAME_FULL) if mind_map else "",
     }
     if len(segs) > 1:
         seg_payload = []
@@ -414,13 +445,23 @@ def _render_brief_md(p):
     L.append("   - 若截图/字幕里是流程图、架构图、公式、代码或操作步骤，正文要用文字把逻辑讲清，让人不看图也懂。")
     if not p["frames"]:
         L.append("   （本视频无配图，忽略本条，写纯文字笔记。）")
-    L.append("4. **学科专属要求**：" + (p.get("guidance") or "用通俗语言讲清机制，突出可迁移结论。"))
-    L.append("5. **通用要求**：")
+    if p.get("mind_map"):
+        L.append("4. **思维脑图（Mermaid）**：")
+        for line in (p.get("mindmap_spec") or "").splitlines():
+            if line.strip():
+                L.append("   " + line)
+        if p["frames"]:
+            L.append("   - 图文与脑图并存：截图按第 3 条正常穿插，脑图作为结构性内容的补充。")
+        else:
+            L.append("   - 本视频无配图，脑图是唯一视觉元素，必须生成。")
+    n_spec = 5 if p.get("mind_map") else 4
+    L.append(f"{n_spec}. **学科专属要求**：" + (p.get("guidance") or "用通俗语言讲清机制，突出可迁移结论。"))
+    L.append(f"{n_spec + 1}. **通用要求**：")
     L.append("   - 用 Markdown 输出，从 `##` 级标题开始（不写多余一级标题，不用代码块包裹整篇）。")
     L.append("   - 正文按知识点分节，逻辑连贯、有信息密度，避免复述口语。")
     L.append("   - 不出现「本视频」「UP主」「这个视频」之类口语，直接讲内容本身。")
     L.append("   - 全文简体中文。")
-    L.append(f"6. **字数控制**：本笔记目标约 **{p['target_chars']}** 字（允许 ±15%）。信息密度优先——既不要注水凑字数，也不要过简漏掉关键论证。")
+    L.append(f"{n_spec + 2}. **字数控制**：本笔记目标约 **{p['target_chars']}** 字（允许 ±15%）。信息密度优先——既不要注水凑字数，也不要过简漏掉关键论证。")
     L.append("")
 
     if p["frames"]:
@@ -469,7 +510,7 @@ def _render_brief_md(p):
 
 
 def generate_chunked(title, entries, frames, segs, template, target,
-                     api_key, base_url, model, img_prefix):
+                     api_key, base_url, model, img_prefix, mind_map=False):
     """
     长视频切块生成：每段取自身字幕切片+该段帧，按学科模板独立生成一节（## 章节，
     内部 ### 小节），最后用一次轻量调用合成全局「内容概要」置于最前；插图全局统一编号。
@@ -493,7 +534,8 @@ def generate_chunked(title, entries, frames, segs, template, target,
             f"{title}（第{idx}/{n}段，{fmt_ts(s0)}–{fmt_ts(s1)}）",
             build_frames_desc(seg_frames) if seg_frames else "",
             seg_sub or "（本段无字幕，请仅依据截图信息撰写）",
-            chap_template, seg_target, has_frames=bool(seg_frames), sub_level=3)
+            chap_template, seg_target, has_frames=bool(seg_frames), sub_level=3,
+            mind_map=mind_map)
         print(f"[md] 生成第 {idx}/{n} 段（{fmt_ts(s0)}–{fmt_ts(s1)}，"
               f"{len(seg_entries)} 条字幕，{len(seg_frames)} 帧）...")
         body_i = strip_code_fence(call_llm(prompt, api_key, base_url, model))
@@ -726,6 +768,11 @@ def main():
     ap.add_argument("--emit-brief", action="store_true",
                     help="Agent 原生模式：导出笔记生成简报(_brief.md/_brief.json)后退出，"
                          "由宿主 Agent 自带模型按简报撰写笔记，不走外部 LLM（省 API Key/账单）")
+    ap.add_argument("--mind-map", dest="mind_map", action="store_true", default=None,
+                    help="同时生成思维脑图（Mermaid）。无截图时自动启用；"
+                         "有截图时为图文+脑图并存模式（由 run_local_pipeline 自动判定传入）")
+    ap.add_argument("--no-mind-map", dest="mind_map", action="store_false",
+                    help="关闭脑图，只做纯截图图文笔记（无截图时忽略此开关，脑图是唯一视觉元素）")
     ap.add_argument("--comment-block", default=None,
                     help="可选：评论区格式化文本文件路径，写入简报供 Agent 参考")
     args = ap.parse_args()
@@ -734,6 +781,12 @@ def main():
                          args.scores_json, args.interval, args.bvid, args.page,
                          args.source_url)
     print(f"[md] 载入 {len(frames)} 帧")
+
+    # 脑图开关：无截图时脑图是唯一视觉元素，必须生成，忽略显式关闭
+    mind_map = True if not frames else args.mind_map
+    if mind_map:
+        print("[md] 脑图模式：生成思维脑图"
+              + ("（无截图，脑图为唯一视觉元素）" if not frames else "（图文 + 脑图并存）"))
 
     subtitle = load_subtitle(args.subtitle)
     print(f"[md] 字幕 {len(subtitle)} 字")
@@ -765,7 +818,7 @@ def main():
         brief_md, brief_json = emit_brief(
             title=title, bvid=args.bvid, page=args.page, frames=frames,
             subtitle=subtitle, template=template, target=target,
-            entries=entries, segs=segs, args=args)
+            entries=entries, segs=segs, args=args, mind_map=mind_map)
         print(f"[brief] 已导出 Agent 原生模式简报：{brief_md}")
         print(f"[brief] 请宿主 Agent 按简报撰写 {args.output}，再运行 "
               f"`python md2pdf.py --input {args.output}`")
@@ -779,13 +832,14 @@ def main():
     if len(segs) > 1:
         print(f"[md] 长视频切块模式：{len(segs)} 段（每段约 {args.segment_minutes} 分钟）")
         body = generate_chunked(title, entries, frames, segs, template, target,
-                                args.api_key, args.base_url, args.model, args.img_prefix)
+                                args.api_key, args.base_url, args.model, args.img_prefix,
+                                mind_map=mind_map)
     else:
         prompt = build_prompt(
             title,
             build_frames_desc(frames) if frames else "",
             subtitle or "（无字幕，请仅依据截图信息撰写）",
-            template, target, has_frames=bool(frames))
+            template, target, has_frames=bool(frames), mind_map=mind_map)
         print(f"[md] 调用 {args.model} 生成正文 ...")
         body = strip_code_fence(call_llm(prompt, args.api_key, args.base_url, args.model))
         if frames:

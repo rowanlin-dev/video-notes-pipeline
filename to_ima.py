@@ -363,6 +363,7 @@ def main():
     ap.add_argument("--kb-id", help="目标知识库 ID（显式指定，优先于 --route）")
     ap.add_argument("--kb-name", help="目标知识库名称（按名称模糊匹配）")
     ap.add_argument("--folder-id", help="知识库内文件夹 ID（显式指定时用）")
+    ap.add_argument("--folder-name", help="知识库内文件夹名称（按名查找，找不到自动新建根级文件夹）")
     ap.add_argument("--route", action="store_true",
                     help="按笔记内容自动归档：选知识库 + 自动建/选主题文件夹")
     ap.add_argument("--verify", action="store_true",
@@ -400,7 +401,10 @@ def main():
 
     if args.kb_id or args.kb_name:
         kb_id = resolve_kb(node, skill_dir, args.kb_id, args.kb_name)
-        folder_id = args.folder_id
+        if args.folder_name:
+            folder_id = resolve_or_create_folder(node, skill_dir, kb_id, args.folder_name, create=not args.verify)
+        else:
+            folder_id = args.folder_id
         print(f"[target] 显式指定知识库 id={kb_id}" + (f" 文件夹={folder_id}" if folder_id else ""))
 
     elif args.route:

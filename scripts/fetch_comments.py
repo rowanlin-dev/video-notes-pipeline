@@ -22,6 +22,7 @@ import sys
 import json
 import time
 import argparse
+import subprocess
 import urllib.parse
 import urllib.request
 import hashlib
@@ -42,9 +43,20 @@ _UA = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com"}
 # ---------------------------------------------------------------- 网络
 def _http_get_json(url: str, params: dict) -> dict:
     qs = urllib.parse.urlencode(params)
-    req = urllib.request.Request(f"{url}?{qs}", headers=_UA)
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    headers = dict(_UA)
+    try:
+        req = urllib.request.Request(f"{url}?{qs}", headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError:
+        # B站 412 风控按 TLS 指纹拦截 Python urllib，退 curl（curl 原生指纹可通过）
+        hdr_args = [h for k, v in headers.items() for h in ("-H", f"{k}: {v}")]
+        out = subprocess.run(["curl", "-s", "--http1.1", "-m", "30",
+                              f"{url}?{qs}"] + hdr_args,
+                             capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError(f"curl fallback failed for {url}: {out.stderr}")
+        return json.loads(out.stdout)
 
 
 def get_aid(bvid: str) -> tuple:

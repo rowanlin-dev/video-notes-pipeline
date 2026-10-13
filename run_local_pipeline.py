@@ -5,16 +5,20 @@
 ================================
 对本地视频文件做 ASR + 抽帧 + 笔记生成，无需 B 站下载。
 
-脑图模式自动启用：时长 ≥30min 自动跳过截图流程，只做 ASR + 纯文本笔记 + Mermaid 图。
-可用 --brain-map / --no-brain-map 覆盖。
+视觉模式（两个独立维度）：
+  - 长视频(≥30min) 默认只做脑图：跳过抽帧/OCR/打分/精选/文字提取，只做 ASR + 笔记 + Mermaid 图，
+    避免产生上千张截图文件。
+  - 短视频 默认「截图 + 脑图」并存：保留抽帧图文，同时生成思维脑图补充结构性内容。
+  - 均可用 --brain-map / --no-brain-map（控制是否跳过截图）、--mind-map / --no-mind-map（控制是否生成脑图）覆盖。
 
 用法：
   python run_local_pipeline.py --video /path/to/video.mp4
   python run_local_pipeline.py --video /path/to/video.mp4 --title "自定义标题"
   python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25
   python run_local_pipeline.py --video /path/to/long_lecture.mp4 --parallel-asr --asr-workers 4
-  python run_local_pipeline.py --video /path/to/short.mp4 --brain-map          # 强制脑图（跳过截图）
+  python run_local_pipeline.py --video /path/to/short.mp4 --no-mind-map        # 短视频只截图不画脑图
   python run_local_pipeline.py --video /path/to/long.mp4 --no-brain-map        # 强制截图（长视频也做截图）
+  python run_local_pipeline.py --video /path/to/long.mp4 --no-brain-map --mind-map  # 长视频也要截图+脑图
 
 依赖：
   pip install faster-whisper av
@@ -100,9 +104,14 @@ def main():
     ap.add_argument("--max-frames", type=int, default=12, help="精选基础上限")
     ap.add_argument("--hard-max-frames", type=int, default=30, help="精选绝对上限")
     ap.add_argument("--brain-map", dest="brain_map", action="store_true", default=None,
-                    help="脑图图文模式：跳过抽帧/OCR/打分/精选/文字提取，只做 ASR + 纯文本笔记 + Mermaid 图")
+                    help="只做脑图：跳过抽帧/OCR/打分/精选/文字提取，只做 ASR + 笔记 + Mermaid 图"
+                         "（默认长视频≥30min 自动启用）")
     ap.add_argument("--no-brain-map", dest="brain_map", action="store_false",
-                    help="强制关闭脑图模式，即使长视频也做截图图文笔记")
+                    help="强制执行截图流程，即使长视频也做截图图文笔记")
+    ap.add_argument("--mind-map", dest="mind_map", action="store_true", default=None,
+                    help="生成思维脑图（默认全开；短视频为「截图+脑图」并存，长视频为只做脑图）")
+    ap.add_argument("--no-mind-map", dest="mind_map", action="store_false",
+                    help="不生成脑图，只做纯截图图文笔记（长视频会因无截图而无图，仅极端场景使用）")
     ap.add_argument("--segment-minutes", type=int, default=0,
                     help="长视频切块：每段约多少分钟（<=1 关闭切块，默认关闭）")
     ap.add_argument("--max-segments", type=int, default=12, help="长视频切块最大段数")
@@ -155,17 +164,30 @@ def main():
     print(f"[pipeline] 标题：{title}")
     print(f"[pipeline] 工作目录：{run_dir}")
 
-    # 脑图模式自动检测：长视频(>30min)自动启用，可用 --brain-map / --no-brain-map 覆盖
-    brain_map = args.brain_map
-    if brain_map is None:
-        brain_map = duration >= 1800
-        if brain_map:
-            print(f"[pipeline] 视频 >30min，自动启用脑图模式（跳过截图流程，只做 ASR + 笔记 + Mermaid 图）")
-    else:
-        print(f"[pipeline] 脑图模式={'启用' if brain_map else '关闭'}（截图流程={'跳过' if brain_map else '执行'}）")
+    # ---- 视觉模式：两个独立维度 ----
+    #   skip_screenshots：跳过抽帧/OCR/打分/精选/文字提取（仅长视频，避免上千截图文件）
+    #   mind_map         ：是否生成思维脑图（所有视频都生成；无截图时脑图是唯一视觉元素）
+    # 长视频(≥30min) 默认只做脑图；短视频默认「截图 + 脑图」并存。
+    # 两者都可用 --brain-map / --no-brain-map、--mind-map / --no-mind-map 覆盖。
+    skip_screenshots = args.brain_map
+    if skip_screenshots is None:
+        skip_screenshots = duration >= 1800
+    mind_map = args.mind_map
+    if mind_map is None:
+        mind_map = True  # 脑图对短视频也有价值，默认全开
 
-    # 脑图模式只创建 output 目录，不创建截图目录
-    if brain_map:
+    if args.brain_map is not None:
+        print(f"[pipeline] 脑图模式={'强制启用' if args.brain_map else '强制关闭'}"
+              f"（截图流程={'跳过' if skip_screenshots else '执行'}）")
+    elif skip_screenshots:
+        print(f"[pipeline] 视频 >30min，自动只做脑图（跳过截图流程：ASR + 笔记 + Mermaid 图）")
+    else:
+        print(f"[pipeline] 短视频模式：截图 + 脑图并存"
+              f"（{'跳过' if skip_screenshots else '执行'}截图流程）")
+    print(f"[pipeline] 思维脑图={'启用' if mind_map else '关闭'}")
+
+    # 只做脑图时仅创建 output 目录；截图模式才建截图相关目录
+    if skip_screenshots:
         for d in [run_dir, out_dir, img_dir]:
             d.mkdir(parents=True, exist_ok=True)
     else:
@@ -231,9 +253,9 @@ def main():
         else:
             print(f"  字幕已存在，跳过 ASR")
 
-    # ---- 脑图模式：跳过截图流程 ----
-    if brain_map:
-        print(f"[pipeline] 脑图模式：跳过抽帧 → OCR → 打分 → 精选 → 文字提取")
+    # ---- 只做脑图时：跳过截图流程 ----
+    if skip_screenshots:
+        print(f"[pipeline] 跳过抽帧 → OCR → 打分 → 精选 → 文字提取（长视频只做脑图）")
         n_raw = n_sel = n_final = 0
         scores_json = run_dir / "vision_scores.json"
         extract_json = run_dir / "vision_extract.json"
@@ -338,6 +360,10 @@ def main():
                "--duration", str(int(duration)),
                "--comment-enabled", "0",
                "--stat-view", "0", "--stat-like", "0", "--stat-favorite", "0"]
+        if mind_map:
+            cmd += ["--mind-map"]
+        else:
+            cmd += ["--no-mind-map"]
         if args.segment_minutes and args.segment_minutes > 1:
             cmd += ["--segment-minutes", str(args.segment_minutes),
                     "--max-segments", str(args.max_segments)]

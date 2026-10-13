@@ -64,3 +64,7 @@ _deliver_anim/
 _verify_tab_sim.py
 scripts/_ts_backup/
 scripts/wait_asr.py
+# 一次性排查脚本（tmp_* 多为写死 BV 号/本机路径/知识库 ID 的调试孤本）
+tmp_*.py
+tmp_*.mjs
+tmp_*.json

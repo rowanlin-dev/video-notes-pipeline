@@ -176,13 +176,28 @@ def detect_ad_segments(subtitle_txt_path: str, keywords: list = None,
     return [(s, e) for s, e in merged]
 
 
+def _http_get_json(url: str, headers: dict) -> dict:
+    """GET 并解析 JSON。B站风控按 TLS 指纹拦截 Python urllib（HTTP 412），失败自动退 curl。"""
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        hdr_args = [h for k, v in headers.items() for h in ("-H", f"{k}: {v}")]
+        out = subprocess.run(["curl", "-s", "--http1.1", "-m", "30", url] + hdr_args,
+                             capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError(f"curl fallback failed for {url}: {out.stderr}")
+        return json.loads(out.stdout)
+
+
 def get_video_info(bvid: str) -> dict:
     """Get video metadata from Bilibili API."""
-    import urllib.request
     url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req) as resp:
-        data = json.loads(resp.read())
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"}
+    data = _http_get_json(url, headers)
     if data["code"] != 0:
         raise RuntimeError(f"API error: {data}")
     return data["data"]
@@ -252,8 +267,6 @@ def _asr_fallback(bvid: str, page: int, workspace: str) -> str:
 
 def download_subtitles(bvid: str, page: int, start: float = None, end: float = None) -> str:
     """Download AI subtitles from Bilibili. Returns path to saved subtitle file."""
-    import urllib.request
-
     info = get_video_info(bvid)
     cid = info["pages"][page - 1]["cid"]
     title = info["pages"][page - 1]["part"]
@@ -278,13 +291,11 @@ def download_subtitles(bvid: str, page: int, start: float = None, end: float = N
             print("[warn] 无 SESSDATA，官方AI字幕大概率不可用。"
                   "如需字幕请配置 bilibili_cookies.txt（Netscape 格式）")
         player_url = f"https://api.bilibili.com/x/player/wbi/v2?bvid={bvid}&cid={cid}"
-        req = urllib.request.Request(player_url, headers={
+        player_data = _http_get_json(player_url, {
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://www.bilibili.com",
             "Cookie": f"SESSDATA={sessdata}",
         })
-        with urllib.request.urlopen(req) as resp:
-            player_data = json.loads(resp.read())
 
         subtitles = player_data.get("data", {}).get("subtitle", {}).get("subtitles", [])
         if not subtitles:
@@ -296,9 +307,7 @@ def download_subtitles(bvid: str, page: int, start: float = None, end: float = N
             sub_url = "https:" + sub_url
 
         print(f"[subtitle] Downloading: {subtitles[0].get('lan_doc', 'unknown')}")
-        req = urllib.request.Request(sub_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read())
+        data = _http_get_json(sub_url, {"User-Agent": "Mozilla/5.0"})
 
         with open(sub_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)

@@ -1,8 +1,8 @@
-# Bilibili Video Notes（工具入口 · v1.3.1）
+# Bilibili Video Notes（工具入口 · v1.4.0）
 
 从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
 
-> 当前版本 **v1.3.1**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
+> 当前版本 **v1.4.0**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
 
 完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
@@ -54,7 +54,7 @@ python run_local_pipeline.py --video /path/to/video.mp4 --source-url "https://ww
 与 B 站差异：默认禁用自进化黑名单、哈希去重阈值 20、输出在 `runs/local_<标题>_p1/output/`。
 依赖：额外 `pip install av`。
 
-**脑图图文模式**：时长 ≥30min 自动启用（跳过抽帧/OCR/打分/精选/文字提取），只做 ASR + 纯文本笔记 + Mermaid 图，避免大量截图文件（100+MB/上千文件）。可用 `--brain-map` 强制启用，或 `--no-brain-map` 强制关闭。短视频不受影响。
+**脑图图文模式**：**所有视频都会生成思维脑图**（默认全开），是否保留截图分两种模式——长视频（≥30min）默认**只做脑图**（跳过抽帧/OCR/打分/精选/文字提取，避免 100+MB/上千文件）；短视频（<30min）默认**截图 + 脑图并存**。两个维度独立：`--brain-map`/`--no-brain-map` 控制是否跳过截图，`--mind-map`/`--no-mind-map` 控制是否生成脑图。无截图时脑图是唯一视觉元素，`--no-mind-map` 会被忽略。
 
 **Mermaid 图后处理流水线**：`render_mermaid.py` → `rectangular_layout.py`（横向链式图→矩形布局）→ `svg_padder.py`（宽高比调整）。`rectangular_layout.py` 自动检测 6+ 节点的 `flowchart LR` 线性链，转换为矩形布局（上下各 2 个、左右均匀分布），避免横向过长。
 
@@ -79,11 +79,14 @@ python run_local_pipeline.py --video /path/to/video.mp4 --source-url "https://ww
 
 实测样本：3.6 分钟→约 6 分钟；10 分钟→约 12 分钟；33 分钟→约 23 分钟。
 
-## 脑图模式（长视频专用）
+## 脑图模式
 
->30 分钟的长视频或用户明确要求时，切换为**脑图图文模式**，不依赖截图/OCR/视觉打分。
+**所有视频都会生成思维脑图**；是否同时保留截图按视频长度自动决定：长视频（≥30min）只做脑图，短视频（<30min）截图 + 脑图并存。
 
 流程：ASR 字幕 → 写笔记（标题作为时间节点索引）→ 评估需补充脑图的内容 → 生成 Mermaid 图 → 渲染为 SVG → 横向链式图转矩形布局 → SVG 宽高比后处理 → 嵌入 Markdown → PDF
+
+- **无截图时**：脑图是唯一视觉元素，**必须**生成全局大纲图。
+- **有截图时**：脑图是补充，只给有结构/流程/层级的章节画，控制在 1-4 个，与截图互补。
 
 ### 脑图生成规则
 
