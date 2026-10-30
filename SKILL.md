@@ -1,23 +1,26 @@
 ---
 name: video-notes-pipeline
-version: 1.4.0
-description: "从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
-tags: [bilibili, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
+version: 1.5.0
+description: "从 B 站 / 小红书 / 本地视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
+tags: [bilibili, xiaohongshu, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
   - bilibili视频笔记
   - 视频笔记
   - 从视频做笔记
   - video notes
   - 把b站视频做成笔记
+  - 小红书视频笔记
+  - 小红书链接
+  - xhs
   - 本地视频笔记
   - 本机视频
   - 视频文件
   - 本地视频
 ---
 
-# Bilibili Video Notes
+# Bilibili / 小红书 Video Notes
 
-从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性一键归档进 ima 知识库。
+从 B 站教育/讲课视频、小红书视频笔记、本地视频文件一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性一键归档进 ima 知识库。
 
 > 全流程模型免费档即可跑（智谱 GLM-4V-Flash 识图 / deepseek-chat 写正文）。
 
@@ -47,7 +50,7 @@ triggers:
 | 30 分钟 | 约 20-25 分钟 | ASR 转写是大头（约 0.5-0.7×音频时长） |
 | 60 分钟 | 约 35-40 分钟 | 建议 `--segment-minutes 25` 切块 |
 
-**估算口径**：端到端 = 下载（dash 流,1-2 分钟）+ ASR 语音转文字（faster-whisper small CPU 约 0.5-0.7×音频时长）+ 抽帧打分 + 笔记生成 + PDF + 入库。流水线日志 `[pipeline] 全部完成，总耗时 Xs` 可回填校准。
+**估算口径**：端到端 = 下载（dash 流,1-2 分钟）+ ASR 语音转文字（faster-whisper small CPU 约 0.5-0.7×音频时长）+ 抽帧打分 + 笔记生成 + PDF + 入库。流水线日志 `[pipeline] 全部完成，总耗时 Xs` 可回填校准。小红书 / 本地视频同样适用（下载与 ASR 是主要变量）。
 
 **实测样本**：BV1B9TC66EHH（3.6 分钟）→ 约 6 分钟；BV1Wr1uBLEj5（10 分钟）→ 约 12 分钟；BV13z6JYJEd4（33 分钟）→ 约 23 分钟；BV1n7uj6MEyo（8 分钟）→ 约 9 分钟。
 
@@ -242,6 +245,36 @@ python run_local_pipeline.py --video /path/to/video.mp4
 
 **依赖**：需要额外安装 `pip install av`（PyAV 用于抽帧），ASR 模型见上方「常见坑与对策 §2」。
 
+### 小红书视频
+
+当用户给出小红书**视频**笔记链接（`/explore/<id>`、`/discovery/item/<id>` 或 `xhslink.com` 短链）并要求做笔记时，用 `run_xhs_pipeline.py` 一键跑。用户说自然语言（如「帮我把这个小红书视频做成笔记」）时由 AI 映射到下方命令。
+
+```bash
+# 基础用法：视频链接（带 xsec_token 的分享链接最稳）
+python run_xhs_pipeline.py "https://www.xiaohongshu.com/explore/6a634eeb000000001d023323?xsec_token=..."
+
+# 短链 / 自定义标题 / 指定抽帧间隔
+python run_xhs_pipeline.py "https://xhslink.com/xxx" --title "自定义标题" --interval 8
+
+# Agent 原生模式（导出简报后由宿主 Agent 写笔记）
+python run_xhs_pipeline.py "<链接>" --emit-brief
+
+# 只下载视频 / 只解析作品信息（不做笔记）
+python scripts/xhs_download.py --url "<链接>"
+python scripts/xhs_download.py --url "<链接>" --meta-only
+```
+
+**流程**：解析笔记页内嵌的 `window.__INITIAL_STATE__`（无需签名接口）→ 提取标题/作者正文/标签 → 选最高分辨率视频流并校验有音轨 → 下载 `runs/xhs_<作品ID>_p1/xhs_video.mp4` → **复用本地视频流水线**（ASR + 抽帧 + OCR 去重 + 视觉打分 + 精选 + 笔记 + PDF）。
+
+**与 B 站 / 本地视频的差异**：
+- 无官方字幕，必须走本地 ASR
+- 作者正文（`desc`）会写成 `xhs_caption.txt` 作为补充素材融入提示词，与字幕交叉参考
+- 笔记头部来源写成 `小红书 · @作者` 并链接到作品页；**图片时间戳是纯文本**（小红书网页播放器不支持 `?t=` 跳转）
+- 已有视频会自动复用（`--redownload` 强制重下）
+- 图文笔记（非视频）暂不支持，会明确报错
+- 若提示「页面中没有笔记数据 / 需要登录」：浏览器登录小红书后导出 Cookie（Netscape 格式）存为 `xiaohongshu_cookies.txt`，或在 `.env` 填 `XHS_COOKIE=web_session=...; a1=...`
+- 输出在 `runs/xhs_<作品ID>_p1/output/`
+
 ## ASR 音频转文本（长视频并行分块 + 内存自适应 + 多引擎）
 
 无官方字幕时，本地 ASR（faster-whisper，CPU int8）把音轨转为带时间戳字幕 JSON/TXT。长视频（默认 **≥30min**）在 `run_local_pipeline.py` 中**自动切分 + 多进程并行**提速，短视频保持单进程原行为。
@@ -359,6 +392,22 @@ python md2pdf.py --input runs/<BV>_p<N>/output/note.md
 ```
 
 默认行为（带 `TEXT_API_KEY` 时）完全不变，向后兼容。
+
+### 模型能力不足时怎么办（正文过短）
+
+笔记正文由 `TEXT_MODEL` 生成。部分免费模型（如 `glm-4-flash`）单次只写 1–1.5k 字就自然停止（`finish_reason=stop`，并非被 `max_tokens` 截断），日志会打印：
+
+```
+[warn] 正文仅约 1112 字（字幕 5649 字，目标 20866 字），疑似 glm-4-flash 输出能力不足
+[warn] 建议：① 询问用户是否切换到更强的 TEXT_MODEL；② 或加 --emit-brief 由宿主 Agent 撰写笔记
+```
+
+出现该警告时**不是流水线删了字幕**（字幕全文已完整进入 prompt，日志 `[md] 字幕 N 字` 可核对）。宿主 Agent 应：
+1. 默认继续使用用户配置的模型 / Key，不擅自更换；
+2. 询问用户是否切换到更强的长文模型（`deepseek-chat`、`qwen-plus` 等）；
+3. 若配置的模型余额 / 额度不足，或用户选择让宿主 Agent 写，改用 `--emit-brief`：读 `output/_brief.md` 后直接写 `note.md`，再 `md2pdf.py` 渲染。
+
+低成本缓解：`--segment-minutes N` 把字幕分段分别生成再合并（实测 9.6 分钟视频正文 1112 → 2696 字），代价是章节按时间段拆分、模板小节会重复。
 
 ## 脑图模式（思维导图图文模式）
 

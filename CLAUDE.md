@@ -1,8 +1,8 @@
-# Bilibili Video Notes (tool entry · v1.4.0)
+# Bilibili / Xiaohongshu Video Notes (tool entry · v1.5.0)
 
-Turn Bilibili educational videos into illustrated **Markdown + PDF** notes with clickable timestamps, optionally archived into the ima knowledge base.
+Turn Bilibili educational videos, Xiaohongshu (RED) video notes, or local video files into illustrated **Markdown + PDF** notes with clickable timestamps, optionally archived into the ima knowledge base. Models are swappable — any OpenAI-compatible endpoint works.
 
-> Current version **v1.4.0**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
+> Current version **v1.5.0**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
 
 See **SKILL.md** for the full reference. This file is a quick-start for AI agents/collaborators.
 
@@ -66,6 +66,12 @@ python run_pipeline.py BV1hD42137sx --threshold 0.02 --merge-gap 1.5
 
 # Resume from step 4
 python run_pipeline.py BV1xx411c7mD --from-step 4
+
+# Local video file (no network needed)
+python run_local_pipeline.py --video "D:/video/xxx.mp4"
+
+# Xiaohongshu (RED) video note — explore / discovery/item / xhslink short URLs all work
+python run_xhs_pipeline.py "https://www.xiaohongshu.com/explore/<id>?xsec_token=..."
 ```
 
 Outputs land in `runs/<BV>_p<N>/output/`. More parameters in SKILL.md.

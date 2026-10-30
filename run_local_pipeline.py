@@ -97,6 +97,16 @@ def main():
     ap = argparse.ArgumentParser(description="本机视频转图文笔记流水线")
     ap.add_argument("--video", required=True, help="本地视频文件路径")
     ap.add_argument("--title", default=None, help="笔记标题（缺省用文件名）")
+    ap.add_argument("--run-id", default=None,
+                    help="运行目录 / 产物标识（缺省 local_<标题>；小红书传 xhs_<作品ID>）")
+    ap.add_argument("--desc", default=None,
+                    help="作品简介（缺省用「本地视频：文件名」；用于学科自动分类）")
+    ap.add_argument("--context-file", default=None,
+                    help="补充素材文本（如小红书作者正文），融入笔记提示词")
+    ap.add_argument("--source-label", default="",
+                    help="来源标注（如「小红书 · @作者」），覆盖笔记头部的本地视频来源行")
+    ap.add_argument("--source-link", default="",
+                    help="来源页链接，仅用于笔记头部展示（不用于时间戳跳转）")
     ap.add_argument("--source-url", default="",
                     help="原视频在线链接（如 B 站分享链接）。提供后笔记时间戳可点击跳转到原视频对应时间点")
     ap.add_argument("--interval", type=int, default=5, help="抽帧间隔（秒，默认 5）")
@@ -140,7 +150,7 @@ def main():
         sys.exit(1)
 
     title = args.title or video_path.stem
-    bvid = f"local_{safe_name(title)}"
+    bvid = args.run_id or f"local_{safe_name(title)}"
     page = 1
     run_dir = ROOT / "runs" / f"{bvid}_p{page}"
     scene_dir = run_dir / "scene"
@@ -356,7 +366,7 @@ def main():
                "--img-prefix", "images",
                "--output", note_md,
                "--subject", "general",
-               "--desc", f"本地视频：{video_path.name}",
+               "--desc", args.desc or f"本地视频：{video_path.name}",
                "--duration", str(int(duration)),
                "--comment-enabled", "0",
                "--stat-view", "0", "--stat-like", "0", "--stat-favorite", "0"]
@@ -364,6 +374,12 @@ def main():
             cmd += ["--mind-map"]
         else:
             cmd += ["--no-mind-map"]
+        if args.context_file:
+            cmd += ["--context-file", str(args.context_file)]
+        if args.source_label:
+            cmd += ["--source-label", args.source_label]
+        if args.source_link:
+            cmd += ["--source-link", args.source_link]
         if args.segment_minutes and args.segment_minutes > 1:
             cmd += ["--segment-minutes", str(args.segment_minutes),
                     "--max-segments", str(args.max_segments)]

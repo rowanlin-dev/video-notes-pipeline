@@ -28,6 +28,10 @@ def parse_mmd(path: Path):
     if not first.startswith("flowchart lr"):
         return None
 
+    # 含 subgraph 的图不是线性链，矩形布局会把子图标题当成节点、连线也乱掉，直接跳过
+    if any(l.strip().lower().startswith("subgraph") for l in lines[1:]):
+        return None
+
     # 提取所有节点标签
     labels = []
     # 匹配 A[text] 或 A["text"] 或 A[text with spaces]

@@ -1,8 +1,8 @@
 # Video Notes Pipeline 📝
 
-> **B站视频 → 图文笔记 → 知识库 一键流水线**
+> **B站 / 小红书 / 本地视频 → 图文笔记 → 知识库 一键流水线**
 >
-> 从B站教育/讲课视频自动生成**带截图、可点击时间戳**的 Markdown + PDF 笔记，>   
+> 从 B站教育/讲课视频、小红书视频笔记、本地视频文件自动生成**带截图、可点击时间戳**的 Markdown + PDF 笔记，>   
 > 可选一键归档进 ima 知识库。全程模型免费档即可跑（智谱 GLM-4V-Flash / GLM-4-Flash）。
 >
 > 全流程：`下载视频+字幕 → 全覆盖抽帧 → OCR+哈希去重 → AI视觉打分精选 → 提取图中内容 → 融合生成MD/PDF →（可选）入 ima`
@@ -70,6 +70,8 @@
 ## ✨ 功能特点
 
 - 🎬 **自动下载** B站视频和官方 AI 字幕
+- 📕 **小红书视频笔记**：`run_xhs_pipeline.py` 直接解析分享链接，下载视频（校验音轨）后复用本地流水线生成图文笔记，作者正文一并融入笔记
+- 🔀 **模型可随时切换**：`VISION_*`（识图打价，必须多模态）与 `TEXT_*`（写正文，要能写长）两组配置分开，任何 OpenAI 兼容接口都能接（智谱 / DeepSeek / 通义千问 / 硅基流动 / 本地 Ollama），改三行即可换模型；正文偏短时日志会明确告警并给出换模型或 `--emit-brief` 的建议（见「.env 配置 → 换模型」）
 - 📁 **本地视频支持**：`run_local_pipeline.py` 对本地视频文件做 ASR + 抽帧 + 笔记生成，无需网络
 - 📸 **全覆盖抽帧**（场景切换检测 + 定时抽帧两种模式），不丢任何画面
 - 🔍 **OCR + 感知哈希双重去重**，130 帧 → 30 帧左右，不丢有价值内容
@@ -187,14 +189,58 @@ cp bilibili_cookies.txt.example bilibili_cookies.txt
 > **模型可切换**：`.env` 中 `VISION_*`（帧打分 / 识图，必须用视觉模型）与 `TEXT_*`（写笔记正文 + 评论总结，纯文本任务）是分开的。当前启用项写在前面、暂不用的写在「备用」注释块里——**所有 Key 都保留**，切换模型只需取消 / 加注释，不必重新申请 Key。本项目用 `deepseek-chat` 作文本模型（chat 档，非 pro），`glm-4v-flash` 作视觉模型。
 >
 > **📝 长文 / 长视频笔记强烈推荐用 Deepseek 写正文**：笔记正文由 `TEXT_MODEL` 生成。短笔记用 `glm-4-flash` 免费档即可；但**长文（尤其 3 小时访谈、1 小时+ 技术实操这类切块后单段仍有数千字、整篇破万字）务必把 `TEXT_MODEL` 切到 `deepseek-chat` 或更强的长上下文模型**——Deepseek 中文长文写作更稳、上下文更长，`glm-4-flash` 在超长输入下更易截断或发散。本项目 `.env` 已默认将 `TEXT_*` 指向 `deepseek-chat`。>   
-> | `IMA_KB_ID` | - | - | 默认入库知识库 ID；留空则不入库，需用 `--route`/`--kb-id` |>   
-> | `AD_KEYWORDS` | - | 见 `.env.example` | **字幕广告段过滤**，命中即跳过该时间段抽帧 |>   
-> | `AD_CONTEXT_SECONDS` | - | 20 | 广告关键词命中后向前后扩展的秒数 |>   
-> | `FRAME_TYPE_TRASH` | - | `meme,blackscreen,ad,face` | AI 识别的低价值画面类型，直接剔除 |>   
-> | `FRAME_TRASH_KEYWORDS` | - | 见 `.env.example` | **垃圾帧黑名单**，逗号分隔，支持正则 |>   
-> | `FRAME_MIN_SCORE` | - | 3 | 入选帧最低 AI 分数 |>   
-> | `SKIP_HEAD_SECONDS` | - | 0 | 跳过片头 N 秒，去掉求三连/片头动画 |>   
-> | `LEARNED_TRASH_FILE` | - | `trash_learned.json` | 自进化黑名单文件路径 |
+
+| `IMA_KB_ID` | - | - | 默认入库知识库 ID；留空则不入库，需用 `--route`/`--kb-id` |>   
+| `AD_KEYWORDS` | - | 见 `.env.example` | **字幕广告段过滤**，命中即跳过该时间段抽帧 |>   
+| `AD_CONTEXT_SECONDS` | - | 20 | 广告关键词命中后向前后扩展的秒数 |>   
+| `FRAME_TYPE_TRASH` | - | `meme,blackscreen,ad,face` | AI 识别的低价值画面类型，直接剔除 |>   
+| `FRAME_TRASH_KEYWORDS` | - | 见 `.env.example` | **垃圾帧黑名单**，逗号分隔，支持正则 |>   
+| `FRAME_MIN_SCORE` | - | 3 | 入选帧最低 AI 分数 |>   
+| `SKIP_HEAD_SECONDS` | - | 0 | 跳过片头 N 秒，去掉求三连/片头动画 |>   
+| `LEARNED_TRASH_FILE` | - | `trash_learned.json` | 自进化黑名单文件路径 |
+
+### 🔀 换模型：什么时候换、怎么换
+
+流水线用到两组模型，分工是固定的：
+
+| 用途                  | 配置项前缀   | 要求                     | 本项目默认值            |
+| ------------------- | ------- | ---------------------- | ----------------- |
+| 帧打分 / 提取图中文字        | `VISION_*` | **必须支持视觉**（多模态）        | `glm-4v-flash`（免费） |
+| 写笔记正文 / 评论总结        | `TEXT_*`   | 纯文本即可，但要**能写长**的        | `deepseek-chat`   |
+
+换模型只要改 `.env` 里三行：
+
+```ini
+TEXT_API_KEY=sk-xxxx
+TEXT_BASE_URL=https://api.deepseek.com
+TEXT_MODEL=deepseek-chat
+```
+
+任何 **OpenAI 兼容接口**都能直接接——智谱、DeepSeek、通义千问、硅基流动、本地 Ollama 都行，
+代码里走的就是 OpenAI SDK，**不需要改代码**。`.env.example` 末尾附了通义千问与硅基流动的完整示例。
+
+**什么时候该换**：
+
+**① 笔记正文明显偏短（最常踩）** — 日志出现：
+
+```
+[warn] 正文仅约 1112 字（字幕 5649 字，目标 20866 字），疑似 glm-4-flash 输出能力不足
+[warn] 建议：① 询问用户是否切换到更强的 TEXT_MODEL；② 或加 --emit-brief 由宿主 Agent 撰写笔记
+```
+
+这**不是流水线删了字幕**——字幕全文已完整进入 prompt，可用日志 `[md] 字幕 N 字` 核对。
+根因是部分免费模型（如 `glm-4-flash`）单次只写 1–1.5k 字就自然停止
+（`finish_reason=stop`，**并非**被 `max_tokens` 截断）。
+判定基准取「字幕字数」而非 target：target 公式（600 + 时长 × 35 + …）对短视频偏激进，
+直接按 target 比会让正常笔记也频繁告警。
+
+宿主 Agent 应：① 默认继续用用户配置的模型 / Key，**不擅自更换**；
+② 询问用户是否切到 `deepseek-chat`、`qwen-plus` 这类更强的长文模型；
+③ 若配置的 Key 余额 / 额度不足，或用户选择让宿主 Agent 写，改用 `--emit-brief`：
+读 `output/_brief.md` 后直接写 `note.md`，再 `md2pdf.py` 渲染（**无需外部 Key**）。
+
+**② 报错提示余额 / 额度不足** — `文本模型 xxx 调用失败（余额/额度不足）`：
+换额度充足的 Key，或走上面的 `--emit-brief`。
 
 ### 🧹 垃圾帧过滤（强烈建议先配）
 
@@ -304,6 +350,22 @@ python run_local_pipeline.py --video /path/to/video.mp4 --segment-minutes 25
 **本地视频流水线**：提取音频 → ASR 语音转文字（faster-whisper）→ 定时抽帧 → OCR 预筛 + 哈希去重 → 视觉打分 → 自动精选 → 提取图中文字 → 生成 MD + PDF →（可选）入 ima。
 
 **与 B 站视频的差异**：不需要 Cookie 和网络连接；字幕通过本地 ASR 生成；默认禁用自进化黑名单避免跨视频误杀；哈希去重阈值 20 保留更多帧。输出在 `runs/local_<标题>_p1/output/` 下。
+
+### 小红书视频
+
+```bash
+# 解释：直接传小红书作品链接（explore / discovery/item / xhslink 短链）
+# 一句话指令：帮我把这个小红书视频做成笔记
+python run_xhs_pipeline.py "https://www.xiaohongshu.com/explore/<id>?xsec_token=..."
+
+# 解释：只下载视频 / 只看作品信息（不做笔记）
+python scripts/xhs_download.py --url "<链接>"
+python scripts/xhs_download.py --url "<链接>" --meta-only
+```
+
+**流程**：解析笔记页内嵌 `window.__INITIAL_STATE__`（无需签名接口）→ 取最高分辨率视频流并校验音轨 → 下载到 `runs/xhs_<作品ID>_p1/xhs_video.mp4` → 复用本地视频流水线（ASR → 抽帧 → 打分 → 精选 → MD + PDF）。
+
+**与本地视频的差异**：作者正文会作为补充素材融入提示词；来源标注为「小红书 · @作者」；时间戳为纯文本（小红书网页播放器不支持 `?t=` 跳转）；图文笔记（非视频）暂不支持。需登录的作品可将浏览器导出的 Cookie 存为 `xiaohongshu_cookies.txt`，或在 `.env` 填 `XHS_COOKIE`。
 
 ### 时间戳跳转到原视频（--source-url）
 
@@ -670,7 +732,21 @@ B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未
 
 **Q：想换模型**
 
-改 `.env` 里对应几行即可，任何 OpenAI 兼容接口都支持；`.env.example` 末尾附了通义千问、硅基流动示例。
+改 `.env` 里对应几行即可：`VISION_*` 是识图模型（**必须多模态**），`TEXT_*` 是写正文的模型（**要能写长**）。
+任何 OpenAI 兼容接口都支持，`.env.example` 末尾附了通义千问、硅基流动示例。
+
+**Q：笔记正文特别短，是不是流水线把字幕删了？**
+
+不是。日志会明确打印：
+
+```
+[warn] 正文仅约 1112 字（字幕 5649 字，目标 20866 字），疑似 glm-4-flash 输出能力不足
+[warn] 建议：① 询问用户是否切换到更强的 TEXT_MODEL；② 或加 --emit-brief 由宿主 Agent 撰写笔记
+```
+
+根因是**部分免费模型单次只写 1–1.5k 字就自然停止**（`finish_reason=stop`，**并非**被 `max_tokens` 截断）。
+字幕全文已完整进入 prompt，可用日志 `[md] 字幕 N 字` 自证。处理见「⭐ 重点：.env 配置 → 🔀 换模型」一节：
+默认继续用你配置的 Key，需要换会先问你，也可以改用 `--emit-brief` 由宿主 Agent 直接写（无需外部 Key）。
 
 **Q：时间戳链接想在新标签页打开**
 
@@ -719,6 +795,7 @@ video-notes-pipeline/
 ├── SKILL.md / CLAUDE.md / AGENTS.md / CONTRIBUTING.md   # Agent 指令 / 贡献指南
 ├── run_pipeline.py        # 一键流水线入口（--pages / --comments / --no-video / 操作类参数）
 ├── run_local_pipeline.py  # 本地视频流水线入口（--video / --title / --segment-minutes）
+├── run_xhs_pipeline.py    # 小红书视频流水线入口（下载 + 复用本地流水线）
 ├── md_note.py             # 融合字幕生成 Markdown（学科自适应模板 + 切块生成）
 ├── md2pdf.py              # Markdown -> PDF
 ├── auto_select.py         # 按分数+主题自动精选（含垃圾帧过滤、帧数自适应）

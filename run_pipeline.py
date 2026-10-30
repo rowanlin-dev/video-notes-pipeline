@@ -323,6 +323,8 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
 
     # ---- Step 6 生成 Markdown + PDF
     if args.from_step <= 6 <= args.to_step:
+        # 脑图开关（默认开启）：短视频=截图+脑图并存，脑图补充结构/流程类内容
+        mind_map = True if args.mind_map is None else args.mind_map
         img_dir.mkdir(parents=True, exist_ok=True)
         for f in final_dir.glob("*.jpg"):
             shutil.copy2(f, img_dir / f.name)
@@ -344,6 +346,10 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
                "--stat-view", str(stat.get("view", 0)),
                "--stat-like", str(stat.get("like", 0)),
                "--stat-favorite", str(stat.get("favorite", 0))]
+        if mind_map:
+            cmd += ["--mind-map"]
+        else:
+            cmd += ["--no-mind-map"]
         if args.segment_minutes and args.segment_minutes > 1:
             cmd += ["--segment-minutes", str(args.segment_minutes),
                     "--max-segments", str(args.max_segments)]
@@ -383,6 +389,27 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
             with open(note_md, "a", encoding="utf-8") as _f:
                 _f.write("\n\n" + comment_block)
             print("[pipeline] 已追加评论区区块到笔记")
+
+        # Mermaid 代码块 → 渲染 SVG → 宽高比后处理（脑图/流程图，必须在转 PDF 之前）
+        if mind_map:
+            mermaid_dir = out_dir / "mermaid"
+            mermaid_dir.mkdir(parents=True, exist_ok=True)
+            run([PY, SCRIPTS / "extract_mermaid.py",
+                 "--note", note_md, "--mermaid-dir", mermaid_dir,
+                 "--img-prefix", "images"],
+                env=env, step="Step 6a    Mermaid 代码块提取")
+            if list(mermaid_dir.glob("*.mmd")):
+                run([PY, SCRIPTS / "render_mermaid.py",
+                     "--mermaid-dir", mermaid_dir, "--images-dir", img_dir],
+                    env=env, step="Step 6a2  Mermaid 渲染")
+                run([PY, SCRIPTS / "rectangular_layout.py",
+                     "--mermaid-dir", mermaid_dir, "--images-dir", img_dir],
+                    env=env, step="Step 6a3  横向链式图 → 矩形布局")
+            if list(img_dir.glob("*.svg")):
+                run([PY, SCRIPTS / "svg_padder.py", "--dir", img_dir],
+                    env=env, step="Step 6a4  SVG 宽高比后处理")
+                run([PY, SCRIPTS / "normalize_svg_contrast.py", "--dir", img_dir],
+                    env=env, step="Step 6a5  SVG 文字对比度修正")
 
         if not args.no_pdf:
             run([PY, ROOT / "md2pdf.py", "--input", note_md],
@@ -477,6 +504,10 @@ def main():
     ap.add_argument("--no-ima", action="store_true", help="跳过上传到 ima 知识库")
     ap.add_argument("--emit-brief", action="store_true",
                     help="Agent 原生模式：生成笔记简报后停止，由宿主 Agent 自带模型撰写笔记")
+    ap.add_argument("--mind-map", dest="mind_map", action="store_true", default=None,
+                    help="生成思维脑图（Mermaid）；默认开启，短视频为截图+脑图并存")
+    ap.add_argument("--no-mind-map", dest="mind_map", action="store_false",
+                    help="关闭脑图，只做纯截图图文笔记")
     ap.add_argument("--comments", choices=["off", "list", "top", "summary"], default="off",
                     help="评论区（默认 off；学习类价值低，社会/哲学类才有参考意义）："
                          "list=评论列表 / top=高赞评论 / summary=情绪趋势+精选（LLM）")

@@ -70,6 +70,25 @@ def frame_index(name: str) -> int:
     return int(m.group(1)) if m else 0
 
 
+def _as_text(v) -> str:
+    """视觉模型偶尔把 description 等字段返回成 dict/list，统一压平成字符串。"""
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, list):
+        return "；".join(_as_text(x) for x in v if x is not None).strip()
+    if isinstance(v, dict):
+        return "；".join(f"{k}: {_as_text(val)}" for k, val in v.items()).strip()
+    return str(v).strip()
+
+
+def _as_list(v) -> list:
+    if v is None:
+        return []
+    return v if isinstance(v, list) else [v]
+
+
 # ---------------------------------------------------------------- 数据装载
 def load_frames(final_dir, origin_map_path, extract_json, scores_json, interval, bvid, page, source_url=""):
     """汇总每一帧的：文件名、时间戳、主题、关键词、图内文字。"""
@@ -102,7 +121,7 @@ def load_frames(final_dir, origin_map_path, extract_json, scores_json, interval,
         if source_url:
             sep = "&" if "?" in source_url else "?"
             url = f"{source_url}{sep}t={sec}"
-        elif not bvid.startswith("local_"):
+        elif not _is_local_bvid(bvid):
             url = f"https://www.bilibili.com/video/{bvid}/?p={page}&t={sec}"
         frames.append({
             "file": name,
@@ -111,13 +130,13 @@ def load_frames(final_dir, origin_map_path, extract_json, scores_json, interval,
             "timestamp": fmt_ts(sec),
             "url": url,
             "theme": info.get("theme") or sinfo.get("theme") or "",
-            "keywords": sinfo.get("keywords") or info.get("keywords") or [],
-            "content": (info.get("text") or info.get("content") or
-                        info.get("description") or "").strip(),
-            "concepts": info.get("concepts") or [],
-            "formulas": info.get("formulas") or [],
-            "reasoning": (info.get("reasoning") or "").strip(),
-            "tables": info.get("tables") or [],
+            "keywords": _as_list(sinfo.get("keywords") or info.get("keywords")),
+            "content": _as_text(info.get("text") or info.get("content") or
+                               info.get("description")),
+            "concepts": _as_list(info.get("concepts")),
+            "formulas": _as_list(info.get("formulas")),
+            "reasoning": _as_text(info.get("reasoning")),
+            "tables": _as_list(info.get("tables")),
             "score": sinfo.get("score", 0),
         })
     return frames
@@ -203,7 +222,9 @@ _MINDMAP_RULE = (
     "  - 系统架构：用 `flowchart TD`（含 subgraph）\n"
     "  - 时间演进：用 `timeline`\n"
     "  - 分类/集合：用 `flowchart TD` + 子图\n"
-    "Mermaid 代码块必须放在对应内容段落的开头（紧跟标题之后），不要堆在段落末尾或文末。"
+    "Mermaid 代码块必须放在对应内容段落的开头（紧跟标题之后），不要堆在段落末尾或文末。\n"
+    "语法注意：`mindmap` 块内只用缩进表示层级，禁止写 `subgraph ... end`，禁止用 `-->`/`->` 箭头；"
+    "这些是 flowchart 语法，混进 mindmap 会导致渲染失败。"
 )
 _MERMAID_PLACEHOLDER_RULE = (
     "每个图下方用 `![图 N 描述](images/图_N_描述.svg)` 占位，N 从 1 递增。"
@@ -224,7 +245,7 @@ _MINDMAP_WITH_FRAME = (
 
 
 def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frames, sub_level=2,
-                  mind_map=False):
+                  mind_map=False, context=""):
     """按学科模板 + 目标字数拼装笔记生成 prompt（保留图文穿插规则）。
 
     三种视觉模式：
@@ -243,6 +264,9 @@ def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frame
             f"请基于以下素材，写一份结构清晰、可直接入知识库的 Markdown 笔记。"
             f"本视频学科归类为「{label}」，请使用与之匹配的行文结构与侧重点。\n\n"
             f"【视频标题】{title}\n\n")
+    if context:
+        head += (f"【作者原文 / 作品简介（作者自述，可能与字幕重复，作为补充参考；"
+                 f"若与字幕冲突以字幕为准）】\n{context}\n\n")
     if has_frames:
         head += (f"【视频关键截图】（已按时间顺序排列，每张图带编号、时间点、主题与图中文字）\n"
                  f"{frames_desc}\n\n")
@@ -319,7 +343,8 @@ def build_overview_prompt(title, label, seg_summaries):
 
 
 def _is_local_bvid(bvid: str) -> bool:
-    return bool(bvid) and bvid.startswith("local_")
+    """非 B 站作品（本地视频 local_*、小红书 xhs_* 等）不拼 B 站跳转链接。"""
+    return bool(bvid) and (bvid.startswith("local_") or not re.match(r"^BV[0-9A-Za-z]+$", bvid))
 
 
 def _brief_frames_list(frames, bvid):
@@ -339,7 +364,7 @@ def _brief_frames_list(frames, bvid):
 
 
 def emit_brief(title, bvid, page, frames, subtitle, template, target,
-               entries, segs, args, mind_map=False):
+               entries, segs, args, mind_map=False, context=""):
     """Agent 原生模式：把笔记生成所需的全部素材 + 写作 SPEC 导出为
     _brief.md（人/Agent 可读）与 _brief.json（结构化），供宿主 Agent 自带模型
     撰写笔记，全程不调用外部 LLM。返回 (brief_md, brief_json) 路径。"""
@@ -362,6 +387,9 @@ def emit_brief(title, bvid, page, frames, subtitle, template, target,
         "page": page,
         "is_local": is_loc,
         "subject_label": template.get("label"),
+        "context": context,
+        "source_label": getattr(args, "source_label", "") or "",
+        "source_link": getattr(args, "source_link", "") or "",
         "target_chars": target,
         "img_prefix": args.img_prefix,
         "output": str(out),
@@ -412,7 +440,10 @@ def _render_brief_md(p):
     L.append("")
     L.append("## 基本信息")
     L.append(f"- 视频标题：{p['title']}")
-    if is_loc:
+    if p.get("source_label"):
+        link = f"（{p['source_link']}）" if p.get("source_link") else ""
+        L.append(f"- 来源：{p['source_label']}{link}")
+    elif is_loc:
         L.append("- 来源：本地视频（无在线跳转链接）")
     else:
         L.append(f"- 来源：B站 `{p['bvid']}` · 分P {p['page']}")
@@ -425,7 +456,10 @@ def _render_brief_md(p):
     L.append("## 写作 SPEC（必须遵循）")
     L.append("")
     L.append("1. **文件开头**：先写一级标题 `# {标题}`，紧接着一行来源说明，再 `---` 分隔线，然后是正文。来源说明格式：")
-    if is_loc:
+    if p.get("source_label"):
+        link = f"：[{p['source_label']}]({p['source_link']})" if p.get("source_link") else f"：{p['source_label']}"
+        L.append(f"   `> 来源{link} · 共 {n_img} 张图解`")
+    elif is_loc:
         L.append(f"   `> 来源：本地视频 · 共 {n_img} 张图解`")
     else:
         L.append(f"   `> 来源：[{p['bvid']}](https://www.bilibili.com/video/{p['bvid']}/?p={p['page']}) · P{p['page']} · 共 {n_img} 张图解`")
@@ -495,6 +529,12 @@ def _render_brief_md(p):
             L.append(seg["subtitle"])
             L.append("")
 
+    if p.get("context"):
+        L.append("## 作者原文 / 作品简介（补充参考，可能与字幕重复，冲突时以字幕为准）")
+        L.append("")
+        L.append(p["context"])
+        L.append("")
+
     L.append("## 字幕全文")
     L.append("")
     L.append(p["subtitle"] or "（无字幕）")
@@ -510,7 +550,7 @@ def _render_brief_md(p):
 
 
 def generate_chunked(title, entries, frames, segs, template, target,
-                     api_key, base_url, model, img_prefix, mind_map=False):
+                     api_key, base_url, model, img_prefix, mind_map=False, context=""):
     """
     长视频切块生成：每段取自身字幕切片+该段帧，按学科模板独立生成一节（## 章节，
     内部 ### 小节），最后用一次轻量调用合成全局「内容概要」置于最前；插图全局统一编号。
@@ -535,7 +575,7 @@ def generate_chunked(title, entries, frames, segs, template, target,
             build_frames_desc(seg_frames) if seg_frames else "",
             seg_sub or "（本段无字幕，请仅依据截图信息撰写）",
             chap_template, seg_target, has_frames=bool(seg_frames), sub_level=3,
-            mind_map=mind_map)
+            mind_map=mind_map, context=context)
         print(f"[md] 生成第 {idx}/{n} 段（{fmt_ts(s0)}–{fmt_ts(s1)}，"
               f"{len(seg_entries)} 条字幕，{len(seg_frames)} 帧）...")
         body_i = strip_code_fence(call_llm(prompt, api_key, base_url, model))
@@ -565,19 +605,36 @@ def call_llm(prompt, api_key, base_url, model, timeout=300):
     if OpenAI is None:
         raise RuntimeError("缺少依赖：pip install openai")
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-    )
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+    except Exception as e:
+        msg = str(e)
+        low = msg.lower()
+        if "402" in msg or "余额" in msg or "insufficient" in low or "quota" in low:
+            raise RuntimeError(
+                f"文本模型 {model} 调用失败（余额/额度不足）：{msg}\n"
+                "处理建议：① 换上额度充足的 TEXT_MODEL；"
+                "② 或改用 --emit-brief，由宿主 Agent 的模型撰写笔记（无需外部 Key）")
+        raise
     return resp.choices[0].message.content.strip()
 
 
 def strip_code_fence(text):
+    """去掉模型给整篇答案套的外层代码围栏。
+
+    唯一例外：无截图笔记的全局 mindmap 会直接写在答案最开头。
+    若不加判断就剥掉开头的 ```mermaid，正文里的代码块会残缺（只剩 closing fence），
+    后续 extract_mermaid 也就抓不到它，于是脑图以裸代码形式混进正文。
+    """
     t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\n", "", t)
-        t = re.sub(r"\n```$", "", t)
+    if not t.startswith("```") or t.startswith("```mermaid"):
+        return t
+    t = re.sub(r"^```[a-zA-Z]*\n", "", t)
+    t = re.sub(r"\n```$", "", t)
     return t.strip()
 
 
@@ -751,6 +808,12 @@ def main():
     ap.add_argument("--subject", default=None,
                     help="学科桶(tech/humanities/social_philosophy/general)，缺省自动分类")
     ap.add_argument("--desc", default="", help="视频简介，用于学科自动分类")
+    ap.add_argument("--context-file", default=None,
+                    help="补充素材文本（如小红书作者正文/简介），融入提示词供参考")
+    ap.add_argument("--source-label", default="",
+                    help="来源标注（如「小红书 · @作者」），覆盖默认的 B站/本地视频 来源行")
+    ap.add_argument("--source-link", default="",
+                    help="来源页链接，仅用于笔记头部展示（不用于时间戳跳转）")
     ap.add_argument("--duration", type=float, default=0, help="视频时长(秒)，用于字数预算")
     ap.add_argument("--segment-minutes", type=int, default=25,
                     help="长视频切块生成：每段约多少分钟（<=1 关闭切块）")
@@ -791,6 +854,13 @@ def main():
     subtitle = load_subtitle(args.subtitle)
     print(f"[md] 字幕 {len(subtitle)} 字")
 
+    context = ""
+    if args.context_file and Path(args.context_file).exists():
+        context = Path(args.context_file).read_text(encoding="utf-8", errors="ignore").strip()
+        if len(context) > 4000:
+            context = context[:4000] + "\n...（后续内容省略）"
+        print(f"[md] 补充素材 {len(context)} 字")
+
     title = args.title or args.bvid
     subject = args.subject or classify_subject(
         title, args.desc, subtitle[:800], args.api_key, args.base_url, args.model)
@@ -818,7 +888,7 @@ def main():
         brief_md, brief_json = emit_brief(
             title=title, bvid=args.bvid, page=args.page, frames=frames,
             subtitle=subtitle, template=template, target=target,
-            entries=entries, segs=segs, args=args, mind_map=mind_map)
+            entries=entries, segs=segs, args=args, mind_map=mind_map, context=context)
         print(f"[brief] 已导出 Agent 原生模式简报：{brief_md}")
         print(f"[brief] 请宿主 Agent 按简报撰写 {args.output}，再运行 "
               f"`python md2pdf.py --input {args.output}`")
@@ -833,27 +903,48 @@ def main():
         print(f"[md] 长视频切块模式：{len(segs)} 段（每段约 {args.segment_minutes} 分钟）")
         body = generate_chunked(title, entries, frames, segs, template, target,
                                 args.api_key, args.base_url, args.model, args.img_prefix,
-                                mind_map=mind_map)
+                                mind_map=mind_map, context=context)
     else:
         prompt = build_prompt(
             title,
             build_frames_desc(frames) if frames else "",
             subtitle or "（无字幕，请仅依据截图信息撰写）",
-            template, target, has_frames=bool(frames), mind_map=mind_map)
+            template, target, has_frames=bool(frames), mind_map=mind_map, context=context)
         print(f"[md] 调用 {args.model} 生成正文 ...")
         body = strip_code_fence(call_llm(prompt, args.api_key, args.base_url, args.model))
         if frames:
             body = inject_frames(body, frames, args.img_prefix)
 
+    # 字数落差校验：弱模型常只输出 1-1.5k 字就停（finish_reason=stop），
+    # 此时不是流水线删内容，而是模型输出能力不足，提示宿主 Agent 询问用户是否换模型。
+    # 判定基准用「字幕字数」而非 target——target 公式（600+时长*35+…）对短视频偏激进，
+    # 直接按 target 比会让正常笔记也频繁告警。
+    body_chars = len(re.sub(r"\s", "", re.sub(r"```.*?```", "", body, flags=re.DOTALL)))
+    sub_chars = len(re.sub(r"\s", "", subtitle or ""))
+    min_expected = max(1200, min(int(sub_chars * 0.35), 4000))
+    if body_chars < min_expected:
+        print(f"[warn] 正文仅约 {body_chars} 字（字幕 {sub_chars} 字，目标 {target} 字），"
+              f"疑似 {args.model} 输出能力不足")
+        print("[warn] 建议：① 询问用户是否切换到更强的 TEXT_MODEL；"
+              "② 或加 --emit-brief 由宿主 Agent 撰写笔记（无需外部 Key）")
+
     n_frames = len(frames)
+    label = args.source_label or ""
     if n_frames == 0:
-        src = args.bvid if not args.bvid.startswith("local_") else "本地视频"
+        if label:
+            src = f"[{label}]({args.source_link})" if args.source_link else label
+        else:
+            src = "本地视频" if _is_local_bvid(args.bvid) else args.bvid
+        kind = "脑图笔记（无截图）" if mind_map else "纯文字笔记（无截图）"
         header = (f"# {title}\n\n"
-                  f"> 来源：{src} · P{args.page} · 纯文字笔记（无截图）\n\n---\n\n")
+                  f"> 来源：{src} · {kind}\n\n---\n\n")
     else:
-        if args.source_url:
+        if label:
+            src = f"[{label}]({args.source_link})" if args.source_link else label
+            src_line = f"> 来源：{src} · 共 {n_frames} 张图解"
+        elif args.source_url:
             src_line = f"> 来源：[{args.bvid}]({args.source_url}) · P{args.page} · 共 {n_frames} 张图解"
-        elif args.bvid.startswith("local_"):
+        elif _is_local_bvid(args.bvid):
             src_line = f"> 来源：本地视频 · P{args.page} · 共 {n_frames} 张图解"
         else:
             src_line = (f"> 来源：[{args.bvid}]"

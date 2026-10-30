@@ -1,8 +1,8 @@
-# Bilibili Video Notes（工具入口 · v1.4.0）
+# Bilibili / 小红书 Video Notes（工具入口 · v1.5.0）
 
-从 B 站教育/讲课视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
+从 B 站教育/讲课视频、小红书视频笔记、本地视频一键生成带截图、可点击时间戳的 **Markdown + PDF** 图文笔记，可选择性归档进 ima 知识库。
 
-> 当前版本 **v1.4.0**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
+> 当前版本 **v1.5.0**，与 `SKILL.md` 保持同步；改 SKILL.md 时本文件一并更新。端点自动更新器（`update_skill.py`）白名单已含本文件。
 
 完整说明见 **SKILL.md**（本仓库的主要交付物）。本文是给 AI 代理/协作者的快速上手。
 
@@ -54,15 +54,33 @@ python run_local_pipeline.py --video /path/to/video.mp4 --source-url "https://ww
 与 B 站差异：默认禁用自进化黑名单、哈希去重阈值 20、输出在 `runs/local_<标题>_p1/output/`。
 依赖：额外 `pip install av`。
 
+## 小红书视频
+
+当用户给出小红书**视频**笔记链接（`/explore/<id>`、`/discovery/item/<id>` 或 `xhslink.com` 短链）并要求做笔记时，用 `run_xhs_pipeline.py` 一键跑：
+
+```bash
+python run_xhs_pipeline.py "https://www.xiaohongshu.com/explore/<id>?xsec_token=..."
+python run_xhs_pipeline.py "https://xhslink.com/xxx" --interval 8 --no-mind-map
+python run_xhs_pipeline.py "<链接>" --emit-brief          # 交给宿主 Agent 写笔记
+python scripts/xhs_download.py --url "<链接>"              # 只下载视频
+python scripts/xhs_download.py --url "<链接>" --meta-only  # 只解析作品信息
+```
+
+流程：解析笔记页内嵌 `window.__INITIAL_STATE__`（无需签名接口）→ 提取标题/作者正文/标签 → 选最高分辨率视频流并校验音轨 → 下载 `runs/xhs_<作品ID>_p1/xhs_video.mp4` → 复用本地视频流水线（ASR → 抽帧 → 打分 → 精选 → MD + PDF）。
+与本地视频差异：作者正文写入 `xhs_caption.txt` 作为补充素材；来源标注为「小红书 · @作者」；时间戳为纯文本（小红书播放器不支持 `?t=` 跳转）；已有视频自动复用（`--redownload` 强制重下）。
+需登录时：浏览器导出 Cookie 存为 `xiaohongshu_cookies.txt`（Netscape 格式），或 `.env` 填 `XHS_COOKIE`。图文笔记（非视频）暂不支持。
+
 **脑图图文模式**：**所有视频都会生成思维脑图**（默认全开），是否保留截图分两种模式——长视频（≥30min）默认**只做脑图**（跳过抽帧/OCR/打分/精选/文字提取，避免 100+MB/上千文件）；短视频（<30min）默认**截图 + 脑图并存**。两个维度独立：`--brain-map`/`--no-brain-map` 控制是否跳过截图，`--mind-map`/`--no-mind-map` 控制是否生成脑图。无截图时脑图是唯一视觉元素，`--no-mind-map` 会被忽略。
 
-**Mermaid 图后处理流水线**：`render_mermaid.py` → `rectangular_layout.py`（横向链式图→矩形布局）→ `svg_padder.py`（宽高比调整）。`rectangular_layout.py` 自动检测 6+ 节点的 `flowchart LR` 线性链，转换为矩形布局（上下各 2 个、左右均匀分布），避免横向过长。
+**Mermaid 图后处理流水线**：`render_mermaid.py` → `rectangular_layout.py`（横向链式图→矩形布局）→ `svg_padder.py`（宽高比调整）。`render_mermaid.py` 会自动做对比度修正：mermaid 默认主题给浅色 section 配白字（白字压浅底不可读），渲染后按实际填充色亮度把浅色 section 的文字改成深灰 `#1f2937`（mindmap 因节点全为浅底，统一替换）；`rectangular_layout.py` 自动检测 6+ 节点的 `flowchart LR` 线性链，转换为矩形布局（上下各 2 个、左右均匀分布），避免横向过长；含 `subgraph` 的图直接跳过（子图标题会被误当节点）。
 
 **长视频并行 ASR**：时长 ≥30min 自动切分 + 多进程并行（`scripts/run_asr_parallel.py`），合并结果同单进程；可用 `--parallel-asr` / `--no-parallel-asr` 覆盖，`--asr-workers N`（默认 auto）、`--asr-chunk-minutes M`（默认 auto）、`--asr-model-size SIZE`（默认 auto）调参。**内存自适应**：自动检测 CPU 核数和可用内存，选择模型尺寸（tiny/base/small）、并行进程数和分块大小，保留 4GB 系统余量。**自动 VAD 检测**：默认先跑第一块计算字幕密度，密集（>8条/分钟）→ 无VAD快速模式，稀疏 → 保持VAD。引擎变体：`asr_subtitle.py`（VAD 默认）/ `asr_fast.py`（关 VAD 快转）/ `asr_ct2.py`（直连 CTranslate2 绕 MKL）/ `run_asr_direct.py`（单进程无分块，调试/短音频）。详见 SKILL.md「ASR 音频转文本」节。
 
 ## Agent 原生模式（免外部 LLM）
 
 若宿主 Agent 自带模型，可省掉 skill 内置 LLM：在命令后加 `--emit-brief`，脚本导出 `output/_brief.md`（素材 + 写作规范）后停下；Agent 按简报写 `note.md`，再 `python md2pdf.py --input <note.md>` 渲染。无需 `TEXT_API_KEY`。默认行为不变。详见 SKILL.md。
+
+**模型能力不足**：若日志出现 `[warn] 正文仅约 X 字，目标 Y 字`，说明用户配置的文本模型单次输出能力不足（不是流水线删内容，字幕全文已进 prompt）。默认继续用用户配置的模型/Key，先询问是否切换到更强的长文模型；若余额/额度不足或用户选择由 Agent 写，则改用 `--emit-brief`。
 
 ## 耗时预估
 

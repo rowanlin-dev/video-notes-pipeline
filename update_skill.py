@@ -52,6 +52,7 @@ UPSTREAM_FILES = [
     # 根目录主脚本
     "run_pipeline.py",
     "run_local_pipeline.py",
+    "run_xhs_pipeline.py",
     "md2pdf.py",
     "md_note.py",
     "to_ima.py",
@@ -73,6 +74,7 @@ UPSTREAM_FILES = [
     "scripts/run_asr_direct.py",
     "scripts/clean_markdown_bold.py",
     "scripts/extract_frames.py",
+    "scripts/xhs_download.py",
     "scripts/fix_bili_timestamps.py",
     "scripts/extract_key_sentences.py",
     "scripts/fetch_comments.py",
@@ -99,6 +101,7 @@ PROTECTED_PATTERNS = [
     ".skill_backup", "__pycache__", "*.pyc",
     "runs", "output", "venv", ".venv",
     "bilibili_cookies.txt",
+    "xiaohongshu_cookies.txt",
 ]
 
 VERSION_FILE = "version.txt"

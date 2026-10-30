@@ -1,0 +1,7 @@
+# Netscape HTTP Cookie File
+# 小红书「需要登录」的笔记才需要本文件；公开笔记通常无需 Cookie。
+# 获取方法：浏览器登录 xiaohongshu.com → 用「Cookie 导出」插件导出 Netscape 格式，
+# 保存为本文件（与本 .example 同级，文件名去掉 .example）。
+# 最低要求包含 web_session 与 a1；其余字段（webId 等）可一并导出，不影响使用。
+.xiaohongshu.com	TRUE	/	FALSE	0	web_session	YOUR_WEB_SESSION_HERE
+.xiaohongshu.com	TRUE	/	FALSE	0	a1	YOUR_A1_HERE

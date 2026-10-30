@@ -1,6 +1,7 @@
 # 敏感配置
 .env
 bilibili_cookies.txt
+xiaohongshu_cookies.txt
 *.key
 *.pem
 
