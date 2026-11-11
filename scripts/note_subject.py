@@ -127,15 +127,19 @@ def compute_note_budget(duration=0, subtitle_chars=0, evidence_blocks=0,
                         comment_count=0, stats=None) -> int:
     """按信息密度动态控制目标字数（移植自 Rimagination write_note_budget，适配）。
 
-    base = 600 + 时长*35 + 字幕字数*0.025 + 证据帧数*8 + min(评论数,300)*3
+    base = 600 + 时长*35 + 字幕字数*0.22 + 证据帧数*8 + min(评论数,300)*3
     再 clamp 到 [1200, 45000]，最后乘质量乘数（播放/点赞/收藏占比，1.0~1.5）。
+
+    字幕系数取 0.22 而非 0.025：后者对 1~1.5 小时的技术课只给 4k~6k 字目标，
+    会把完整课程压成“目录式摘要”。笔记首先是给人学习用的，目标篇幅应随字幕
+    信息量同步增长，只排除口语重复与卖课话术，不删技术内容。
     """
     dur = float(duration or 0)
     sub = int(subtitle_chars or 0)
     ev = int(evidence_blocks or 0)
     cm = min(int(comment_count or 0), 300)
 
-    base = 600 + dur * 35 + sub * 0.025 + ev * 8 + cm * 3
+    base = 600 + dur * 35 + sub * 0.22 + ev * 8 + cm * 3
     base = max(1200.0, min(base, 45000.0))
 
     mult = 1.0

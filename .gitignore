@@ -15,6 +15,9 @@ local_overrides*
 trash_learned.json
 使用说明.md
 
+# 本地开发规范文档（docs/dev-standards 等，仅本地留存，不入库）
+docs/
+
 # Python
 __pycache__/
 *.py[cod]
