@@ -50,15 +50,18 @@
    - 直连不稳就走镜像：`git clone https://ghproxy.net/https://github.com/rowanlin-dev/video-notes-pipeline.git`
      （还不行换 https://mirror.ghproxy.com/ 或 https://gitclone.com/github.com/...）
    cd video-notes-pipeline
-3. 装依赖：pip 直连慢就加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`，
-   或先 `pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple` 永久切源：
+3. 装依赖：pip 直连慢就加 `-i https://mirrors.aliyun.com/pypi/simple`，
+   或先 `pip config set global.index-url https://mirrors.aliyun.com/pypi/simple` 永久切源
+   （pip 26.x 对清华源可能 403，阿里云源对 25.x / 26.x 都可用）：
    pip install -r scripts/requirements.txt
 4. 装 FFmpeg（抽帧必需）：
    - Windows：便携版解压到 C:\ffmpeg（pipeline 会自动识别），或 `winget install -e --id Gyan.FFmpeg`
    - macOS：`brew install ffmpeg`；Linux：`sudo apt-get install ffmpeg`
 5. （可选）提前下载 ASR 模型，避免运行时卡：
-   HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
-   （有代理时直连也行，去掉 HF_ENDPOINT 即可）
+   HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 hf download Systran/faster-whisper-small --local-dir models/faster-whisper-small
+   （huggingface-hub 2.x 已移除 huggingface-cli，命令是 hf download；有代理时直连也行，去掉 HF_ENDPOINT 即可）
+6. 安装自检（必做）：python scripts/doctor.py
+   会做「1 秒音频 → 解码 → 真实转写」的端到端冒烟，把 PyAV / ffmpeg / 模型 / .env 旧配置问题拦在跑视频之前。
 
 装完把 .env.example 复制为 .env 填 API Key，配好 bilibili_cookies.txt，读 README 了解用法。
 ```
@@ -113,12 +116,13 @@ python --version
 git clone https://ghproxy.net/https://github.com/rowanlin-dev/video-notes-pipeline.git
 cd video-notes-pipeline
 
-# ③ pip 永久切到清华源（一次即可，之后所有 pip 都走国内）
-pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# ③ pip 永久切到国内源（一次即可，之后所有 pip 都走国内）
+#    阿里云源对 pip 25.x / 26.x 都可用；清华源对 pip 26.x 可能返回 403
+pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
 pip install -r scripts/requirements.txt
 ```
 
-> 备选 pip 源：阿里云 `https://mirrors.aliyun.com/pypi/simple`、中科大 `https://pypi.mirrors.ustc.edu.cn/simple`。>   
+> 备选 pip 源：清华 `https://pypi.tuna.tsinghua.edu.cn/simple`、中科大 `https://pypi.mirrors.ustc.edu.cn/simple`。>   
 > 备选 git 镜像：把上例 `https://ghproxy.net/https://github.com/...` 换成>   
 > `https://mirror.ghproxy.com/https://github.com/...` 或 `https://gitclone.com/github.com/...`。>   
 > 想隔离环境可 `python -m venv venv && venv/Scripts/activate`（Windows）/ `source venv/bin/activate`（macOS/Linux），>   
@@ -184,7 +188,7 @@ cp bilibili_cookies.txt.example bilibili_cookies.txt
 | `TEXT_API_KEY`      | -  | 复用 VISION    | 文本模型 API Key               |
 | `TEXT_BASE_URL`     | -  | 复用 VISION    | 文本模型接口地址                   |
 | `TEXT_MODEL`        | -  | glm-4-flash  | 文本模型名（写笔记正文 + 评论总结，纯文本任务）  |
-| `WORKERS`           | -  | 8            | 视觉调用并发数                    |
+| `VISION_WORKERS`    | -  | 4            | 视觉调用并发数（免费档建议 2-4；旧键 `WORKERS` 仍兼容） |
 | `TIMEOUT`           | -  | 120          | 单次视觉调用超时（秒）                |
 | `VISION_MAX_TOKENS` | -  | 1024         | 视觉模型输出上限；智谱 flash 硬上限 1024 |
 
@@ -194,7 +198,8 @@ cp bilibili_cookies.txt.example bilibili_cookies.txt
 
 | `IMA_KB_ID` | - | - | 默认入库知识库 ID；留空则不入库，需用 `--route`/`--kb-id` |>   
 | `AD_KEYWORDS` | - | 见 `.env.example` | **字幕广告段过滤**，命中即跳过该时间段抽帧 |>   
-| `AD_CONTEXT_SECONDS` | - | 20 | 广告关键词命中后向前后扩展的秒数 |>   
+| `AD_CONTEXT_SECONDS` | - | 10 | 广告关键词命中后向前后扩展的秒数（过大易把结论段一起跳过） |>   
+| `AD_MIN_HITS` | - | 2 | 单行命中多少个不同广告词才判定为广告段（设 1 恢复旧行为） |
 | `FRAME_TYPE_TRASH` | - | `meme,blackscreen,ad,face` | AI 识别的低价值画面类型，直接剔除 |>   
 | `FRAME_TRASH_KEYWORDS` | - | 见 `.env.example` | **垃圾帧黑名单**，逗号分隔，支持正则 |>   
 | `FRAME_MIN_SCORE` | - | 3 | 入选帧最低 AI 分数 |>   
@@ -253,15 +258,19 @@ TEXT_MODEL=deepseek-chat
 向前后扩展 `AD_CONTEXT_SECONDS` 秒后**抽帧时直接跳过**。避免截到 "扣 666 领资料""加小助理" 等画面。
 
 ```ini
-AD_KEYWORDS=资料,领取,免费,加微信,小助理,扣666,扣个666,点赞关注,一键三连,求赞,课程,训练营,私教,咨询,优惠,报名,付费,会员,专栏,扫码,进群,福利
-AD_CONTEXT_SECONDS=20
+AD_KEYWORDS=加微信,小助理,扣666,扣个666,点赞关注,一键三连,求赞,训练营,私教,报名,买课,卖课,扫码,进群领,领取资料,课程链接,付费咨询,优惠券
+AD_CONTEXT_SECONDS=10
+AD_MIN_HITS=2
 ```
+
+> 词表只保留明确营销词。「资料 / 免费 / 课程」这类中性词在科技课件里极常见，单词即命中会把结论段整段误判成广告；
+> 因此判定改为「**单行命中 ≥2 个不同词**」，并把前后扩展从 20 秒收紧到 10 秒。
 
 **② 规则黑名单 + AI 类型过滤（零成本）** — `.env` 里加：
 
 ```ini
 FRAME_TYPE_TRASH=meme,blackscreen,ad,face
-FRAME_TRASH_KEYWORDS=白嫖,一键三连,求赞,点赞关注,记得投币,关注,三连,投币,点赞,资料,领取,免费,加微信,小助理,扣666,扣个666,课程,训练营,私教,咨询,优惠,报名,付费,会员,专栏,扫码,进群,福利,面试题,完整资料
+FRAME_TRASH_KEYWORDS=白嫖,一键三连,求赞,点赞关注,记得投币,加微信,小助理,扣666,扣个666,买课,卖课,扫码,进群领,领取资料,课程链接,优惠券
 FRAME_MIN_SCORE=3
 SKIP_HEAD_SECONDS=10          # 跳过片头 10 秒，直接去掉求三连/片头动画
 ```
@@ -572,7 +581,7 @@ B站对访问 `www.bilibili.com` 视频页的出口 IP 有 WAF 风控：
 
 - **典型诱因**：开启 VPN/代理（海外 IP 必被拦）、或短时间请求过密。
 - 元信息/字幕走 `api.bilibili.com`，通常不受影响，因此会出现「**能查到标题却下不了视频**」——这是 412 的典型表现，并非脚本故障。
-- 处理顺序：① 配置 Cookie（登录态更稳）② 关闭 VPN/代理 ③ 降低 `WORKERS` 或稍后重试。
+- 处理顺序：① 配置 Cookie（登录态更稳）② 关闭 VPN/代理 ③ 降低 `VISION_WORKERS` 或稍后重试。
 - VPN 属于环境层变量，代码无法绕过，需手动关闭。
 
 ---
@@ -671,11 +680,11 @@ python run_pipeline.py BV1xx411c7mD --no-ima
 > 🆕 **自 v1.0.1 起，流水线会自动兜底**：`run_pipeline` 在检测到 B站返回 `subtitles:[]`（无字幕轨，含字幕烧录在画面里的视频）时，会**自动**调用 `scripts/asr_subtitle.py` 转写音频，无需手动跑 ASR。ASR 结果保留每句 `from/to` 时间戳，因此「字幕空挡截图」仍然可用；连续旁白视频若字幕首尾相接、无空挡，则接受字幕入镜（**绝不裁剪画面去字幕**）。
 
 ```bash
-pip install faster-whisper -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install faster-whisper -i https://mirrors.aliyun.com/pypi/simple
 ffmpeg -y -i <video>.mp4 -vn -ar 16000 -ac 1 /tmp/audio_16k.wav
-# 国内需镜像 + 禁用 xet 下载模型
+# 国内需镜像 + 禁用 xet 下载模型（huggingface-hub 2.x 已移除 huggingface-cli）
 HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 \
-  huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
+  hf download Systran/faster-whisper-small --local-dir models/faster-whisper-small
 # 语音转文字(ASR)：WhisperModel(..., device="cpu", compute_type="int8")，transcribe(language="zh")
 # 一句话指令：这个视频没字幕/字幕串台，用本地 ASR 把音频转成字幕
 python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subtitles.json
@@ -690,7 +699,7 @@ python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subti
 
 `md2pdf.py` 默认依赖 Chrome/Edge 渲染（**Windows 10 自带 Edge，正常不需要额外装**）。  
 只有「完全没有浏览器」的环境才用 weasyprint 兜底——需先装可选依赖：  
-`pip install -r scripts/requirements-optional.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`  
+`pip install -r scripts/requirements-optional.txt -i https://mirrors.aliyun.com/pypi/simple`  
 （⚠️ Windows 下 weasyprint 还需额外装 GTK 运行库，见该文件内注释），再用 TTF 中文字体：
 
 > 🆕 **Windows 打印卡死修复（v1.0.1）**：`md2pdf.py` 现在为每次打印分配独立的临时 `--user-data-dir`（用完即清理），避免与系统 Edge 默认配置锁冲突导致打印时卡死（旧版偶发 180s 超时退出）。如仍遇到渲染问题，可改用下方 weasyprint 兜底方案。
@@ -702,15 +711,36 @@ python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subti
 
 ### 4. 智谱 API 429 限流（并发打分/提取）
 
-`score_frames_concurrent.py` 并发高时易 429。对策：
+`score_frames_concurrent.py` 并发高时易 429。免费档并发额度很低，旧默认 16 线程会连锁 429；更糟的是旧实现「部分帧失败 → `exit 2`」，几张限流失败的帧就会让整条流水线中断。现已内置：
 
-- 降低并发重跑：`--workers 2 --max-retries 5 --resume`
+- **默认并发降到 4**，可用 `VISION_WORKERS` 覆盖（同时兼容旧键 `WORKERS`）；免费档建议 2-4。
+- **全局限流闸门**：任一线程遇到 429 / 1113，其它线程在下一次请求前一起退避；重试次数默认 5（`VISION_MAX_RETRIES`）。
+- **部分帧失败不再中断流水线**：结果 JSON 已保存，下游 `auto_select` 只用成功帧；只有全部帧失败才返回非零。
+- 手动补打分：`--workers 2 --max-retries 5`
 - ⚠️ resume 按文件名跳过，**失败帧也带 error 会被跳过**——最稳妥是清空输出 JSON 后对整个目录重打分
 - ⚠️ **打分对象是 `selected/` 而非 `scene/`**：scene/ 帧名带时间戳（`frame_0001_00m00s.jpg`），selected/ 是纯编号（`frame_0001.jpg`），scores JSON 的 key 必须与 auto_select 输入的 selected/ 一致
 
 ### 5. deepseek 批量修正字幕的行号陷阱
 
 分批让 LLM 修正字幕时，每批 LLM 会重新编号（续编行号），超出批内校验被丢弃、只回写第一批。对策：**不依赖 LLM 回传行号**，改为按输出顺序拼接 + 只提取 `[时间戳] 文本` 行；每轮从原始 JSON 重建输入保证幂等（见 `scripts/fix_subtitles.py`）。
+
+### 6. 新版 PyAV 让本地 ASR 全线崩溃（静态检查发现不了）
+
+症状：`import` 全通过、`WhisperModel(...)` 能构造，一跑 ASR 就报 `TypeError: open() got an unexpected keyword argument 'metadata_errors'`。
+原因：faster-whisper ≤1.2.x 仍在传 `metadata_errors`，PyAV 15+ 已移除该参数。
+对策：**不要降级 av**（部分平台 / Python 版本没有旧版预编译 wheel）。`scripts/audio_compat.py` 会自动选择「旧 av 原生解码」或「ffmpeg 转 16k wav + numpy 读入」，三个 ASR 脚本均已接入；`python scripts/doctor.py` 会打印当前实际走的是哪条路径。
+
+### 7. 官方 AI 字幕 CDN 403（字幕列表非空但内容拿不到）
+
+`player/wbi/v2` 返回了字幕 URL，但 `aisubtitle.hdslb.com` 返回 403 HTML，旧代码 `json.loads` 直接抛异常让 Step 1 崩。现在「URL 为空 / 下载异常 / body 为空」三种情况统一转本地 ASR；同时 Step 1 会**先确保视频已落盘**——旧顺序先取字幕后下视频，兜底时工作区还没有音轨，会静默产出空字幕。
+
+### 8. 场景检测 0 帧导致打分步骤失败
+
+画面平滑变化的视频检测不到场景切换，打印 `Detected 0 raw scene changes` 后 fallback 固定间隔帧；旧实现把帧写进 `fixed/`，而下游仍读 `scene/`，于是 `No .jpg files found`。现已让 fallback 帧直接写入 `scene/`，保持目录契约；也可显式 `--mode fixed --interval 20`。
+
+### 9. 广告词误伤正文
+
+科技视频里「资料 / 免费 / 课程」极常见，旧词表单词即命中、再把前后各扩 20 秒，会把「三者组合 + 结尾结论」整段跳过截图（只影响截图，不删字幕）。现已收敛词表、改为单行 ≥2 词判定（`AD_MIN_HITS=2`）、前后扩展 10 秒。⚠️ **从旧 `.env.example` 复制的 `.env` 会覆盖代码默认值**，升级后请对照新模板更新 `AD_KEYWORDS` / `AD_CONTEXT_SECONDS` / `FRAME_TRASH_KEYWORDS`。
 
 ---
 
@@ -719,7 +749,7 @@ python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subti
 **Q：提示 412 / 请求被拦截**
 
 B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未登录最易被拦；② 关掉 VPN/代理；  
-③ 等几分钟，或把 `WORKERS` 降到 4。「能查到标题却下不了视频」是 412 典型表现，不是脚本坏了。
+③ 等几分钟，或把 `VISION_WORKERS` 降到 2-4。「能查到标题却下不了视频」是 412 典型表现，不是脚本坏了。
 
 **Q：没有字幕 / 字幕串台（转写内容与视频无关）**
 
@@ -812,6 +842,8 @@ video-notes-pipeline/
 │   ├── smart_select.py            # OCR 预筛 + 感知哈希去重
 │   ├── score_frames_concurrent.py # 多模态视觉打分 + 图内文字提取
 │   ├── asr_subtitle.py            # 语音转文字(ASR)：本地 faster-whisper 转字幕（缺失/串台时）
+│   ├── audio_compat.py            # 音频解码兼容层（旧 av 原生 / 新 av 走 ffmpeg）
+│   ├── doctor.py                  # 安装自检（端到端 ASR 冒烟 + .env 旧配置检查）
 │   ├── fix_subtitles.py           # 语音转文字(ASR)错词的 LLM 术语级修正
 │   ├── apply_subtitles.py         # 字幕写回/校验
 │   ├── gen_full_note.py           # weasyprint + TTF 中文 PDF（无浏览器兜底）
@@ -832,6 +864,18 @@ video-notes-pipeline/
 ---
 
 ## 🆕 更新日志
+
+### v1.6.1 —— 跨环境健壮性修复
+
+- **PyAV 跨版本兼容**：新增 `scripts/audio_compat.py`，解码路径按「WAV 直读 → faster-whisper 原生 → ffmpeg 转 PCM」依次兜底，PyAV 15+ 移除 `metadata_errors` 导致的本地 ASR 崩溃不再复现；`requirements.txt` 只写下界，不钉死 `av`。
+- **安装端到端自检**：新增 `scripts/doctor.py`，用「1 秒音频 → 解码 → 真实转写」冒烟，并检查 ffmpeg、模型、`.env` 旧配置、Cookie、PDF 渲染器；`--live` 追加 Key / SESSDATA 连通性校验。
+- **字幕 CDN 403 兜底**：字幕 URL 为空 / 下载异常 / body 为空时统一转本地 ASR，且先落盘视频再取字幕，避免兜底时没有音轨。
+- **场景检测 0 帧**：fallback 固定间隔帧改为写入 `scene/`，修掉 `selected/` 为空后打分步骤失败。
+- **限流与容错**：视觉打分默认并发 16 → 4（`VISION_WORKERS`），新增全局限流闸门；部分帧失败不再中断流水线。
+- **广告词误伤**：词表只留明确营销词，改为单行 ≥2 词判定（`AD_MIN_HITS`），`AD_CONTEXT_SECONDS` 20 → 10。
+- **依赖与安装**：补 `markdown` / `numpy`；`openai` 缺失时自动退回 `requests`；`huggingface-cli` → `hf download`；pip 镜像默认改阿里云（pip 26.x 对清华源可能 403）。
+
+> ⚠️ 升级提示：重装依赖后先跑 `python scripts/doctor.py`；从旧 `.env.example` 复制来的 `.env` 会覆盖新的默认值，请对照新模板更新广告词与并发配置。
 
 ### v1.6.0 —— 笔记完整性修复
 
