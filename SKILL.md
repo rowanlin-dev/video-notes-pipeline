@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.6.0
+version: 1.6.1
 description: "从 B 站 / 小红书 / 本地视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, xiaohongshu, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
