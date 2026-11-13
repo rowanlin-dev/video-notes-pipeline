@@ -31,11 +31,13 @@ import time
 from pathlib import Path
 
 # 默认广告/卖课关键词（可在 .env 的 AD_KEYWORDS 覆盖，逗号分隔）
+# 只保留明确带营销意图的词。"资料 / 免费 / 课程 / 福利 / 送" 这类中性词
+# 在科技讲解里极常见（如「免费档」「连接外部资料」「固定流程」），
+# 旧词表会把结论段误判成广告并整段跳过截图。可用 --ad-keywords 覆盖。
 DEFAULT_AD_KEYWORDS = [
-    "资料", "领取", "免费", "加微信", "小助理", "扣666", "扣个666",
-    "点赞关注", "一键三连", "求赞", "白嫖", "课程", "训练营",
-    "私教", "咨询", "优惠", "报名", "付费", "会员", "专栏",
-    "买课", "卖课", "扫码", "公众号", "进群", "送", "福利",
+    "加微信", "小助理", "扣666", "扣个666", "点赞关注", "一键三连",
+    "求赞", "白嫖", "训练营", "私教", "报名", "买课", "卖课",
+    "扫码", "进群领", "领取资料", "课程链接", "付费咨询", "优惠券",
 ]
 
 
@@ -121,10 +123,14 @@ def load_ad_keywords() -> list:
 
 
 def detect_ad_segments(subtitle_txt_path: str, keywords: list = None,
-                       context_seconds: float = 10.0) -> list:
+                       context_seconds: float = 10.0, min_hits: int = 2) -> list:
     """
     扫描字幕文本，定位包含广告/卖课关键词的时间区间。
     返回 [(start_sec, end_sec), ...]，区间会按 context_seconds 向前后扩展并合并。
+
+    单行需命中 >= min_hits 个不同关键词才判定为广告。科技讲解里
+    「资料 / 免费 / 课程」这类中性词极常见，单词命中会把结论段整段误杀；
+    组合判定可让宽泛的旧词表也保持安全。设 min_hits=1 可恢复旧行为。
     """
     if not subtitle_txt_path or not os.path.exists(subtitle_txt_path):
         return []
@@ -132,8 +138,8 @@ def detect_ad_segments(subtitle_txt_path: str, keywords: list = None,
     if not keywords:
         return []
 
-    pattern = re.compile("|".join(re.escape(k) for k in keywords))
     hits = []
+    hit_lines = 0
 
     # 字幕行格式：[MMmSSs] 内容  或  [HH:MM:SS] 内容
     ts_re = re.compile(r"^\[(\d+)m(\d+)s\]\s*(.*)$")
@@ -155,7 +161,8 @@ def detect_ad_segments(subtitle_txt_path: str, keywords: list = None,
             else:
                 continue
 
-        if pattern.search(content):
+        if sum(1 for k in keywords if k in content) >= min_hits:
+            hit_lines += 1
             hits.append((max(0.0, sec - context_seconds), sec + context_seconds))
 
     if not hits:
@@ -170,7 +177,8 @@ def detect_ad_segments(subtitle_txt_path: str, keywords: list = None,
         else:
             merged.append([s, e])
 
-    print(f"[ad-filter] 字幕命中 {len(keywords)} 个广告关键词，合并为 {len(merged)} 个过滤区间")
+    print(f"[ad-filter] {hit_lines} 行命中广告词（阈值 {min_hits} 词/行），"
+          f"合并为 {len(merged)} 个过滤区间")
     for s, e in merged:
         print(f"  跳过 {seconds_to_time(s)} ~ {seconds_to_time(e)}")
     return [(s, e) for s, e in merged]
@@ -302,12 +310,24 @@ def download_subtitles(bvid: str, page: int, start: float = None, end: float = N
             print("[warn] 未检测到官方AI/内嵌/外挂字幕（may need login 或无字幕轨）")
             return _asr_fallback(bvid, page, WORKSPACE)
 
-        sub_url = subtitles[0]["subtitle_url"]
+        sub_url = (subtitles[0].get("subtitle_url") or "").strip()
+        if not sub_url:
+            print("[warn] 字幕 URL 为空（B站 wbi 签名/风控常见），转本地 ASR 兜底")
+            return _asr_fallback(bvid, page, WORKSPACE)
         if sub_url.startswith("//"):
             sub_url = "https:" + sub_url
 
         print(f"[subtitle] Downloading: {subtitles[0].get('lan_doc', 'unknown')}")
-        data = _http_get_json(sub_url, {"User-Agent": "Mozilla/5.0"})
+        try:
+            data = _http_get_json(sub_url, {"User-Agent": "Mozilla/5.0"})
+        except Exception as e:
+            # CDN 403 / 风控 / 返回非 JSON：不写半成品，直接走 ASR。
+            # 否则 json.loads 会把 403 HTML 抛成异常，Step 1 直接崩。
+            print(f"[warn] 官方字幕下载失败（{type(e).__name__}: {str(e)[:100]}），转本地 ASR 兜底")
+            return _asr_fallback(bvid, page, WORKSPACE)
+        if not (data.get("body") or []):
+            print("[warn] 官方字幕内容为空，转本地 ASR 兜底")
+            return _asr_fallback(bvid, page, WORKSPACE)
 
         with open(sub_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -485,9 +505,15 @@ def safe_move(pattern: str, trash_name="_raw_trash") -> int:
     return moved
 
 
-def extract_fixed_frames(video_path: str, interval: int = 30) -> list:
-    """Extract frames at fixed intervals."""
-    out_dir = os.path.join(FRAMES_DIR, "fixed")
+def extract_fixed_frames(video_path: str, interval: int = 30,
+                         out_dir: str = None) -> list:
+    """Extract frames at fixed intervals.
+
+    out_dir lets the scene-detection fallback reuse the scene/ directory,
+    keeping the directory contract with run_pipeline.py Step 2/3 intact.
+    """
+    if out_dir is None:
+        out_dir = os.path.join(FRAMES_DIR, "fixed")
     os.makedirs(out_dir, exist_ok=True)
 
     # Clean old frames
@@ -550,9 +576,10 @@ def extract_scene_frames(video_path: str, threshold: float = 0.04, merge_gap: fl
     print(f"[scene] Detected {len(timestamps)} raw scene changes")
 
     if not timestamps:
-        # Fallback: if no scene changes, use fixed interval
-        print("[scene] No scene changes detected, falling back to fixed 30s interval")
-        return extract_fixed_frames(video_path, 30)
+        # Fallback: 场景切换为 0 时，固定间隔帧仍写入 scene/，
+        # 保证下游 Step 2/3 从 scene/ 能读到帧（旧实现写进 fixed/ 导致空目录崩流程）。
+        print("[scene] No scene changes detected, falling back to fixed 30s interval (into scene/)")
+        return extract_fixed_frames(video_path, 30, out_dir=out_dir)
 
     # Pass 2: cluster nearby timestamps (within merge_gap seconds)
     clusters = []
@@ -787,8 +814,10 @@ def main():
                         help="slidegap 模式：仅在时长 >= 该秒数的字幕空挡里截图 (默认 0.25)")
     parser.add_argument("--ad-keywords", default=os.getenv("AD_KEYWORDS", ""),
                         help="广告/卖课关键词，逗号分隔（默认读取 .env 的 AD_KEYWORDS）")
-    parser.add_argument("--ad-context", type=float, default=float(os.getenv("AD_CONTEXT_SECONDS", "20")),
-                        help="广告关键词命中后向前后扩展的秒数（默认 20）")
+    parser.add_argument("--ad-context", type=float, default=float(os.getenv("AD_CONTEXT_SECONDS", "10")),
+                        help="广告关键词命中后向前后扩展的秒数（默认 10，过大易误伤正文）")
+    parser.add_argument("--ad-min-hits", type=int, default=int(os.getenv("AD_MIN_HITS", "2")),
+                        help="单行命中多少个不同关键词才算广告（默认 2，设 1 恢复旧行为）")
     parser.add_argument("--no-download", action="store_true",
                         help="跳过下载，使用已有视频文件")
     parser.add_argument("--no-video", action="store_true",
@@ -813,7 +842,17 @@ def main():
     start_sec = time_to_seconds(args.start) if args.start else None
     end_sec = time_to_seconds(args.end) if args.end else None
 
-    # Step 1: Download subtitles (independent of video)
+    # 官方字幕 CDN 可能 403 / 风控，此时 _asr_fallback() 需要本地音轨。
+    # 旧实现把视频下载放在字幕之后，兜底时工作区还没有视频，会静默产出空字幕。
+    # 先确保视频落盘；download_video() 自带「已存在则跳过」，后续不会重复下载。
+    if args.subtitle and not args.no_video and not args.no_download:
+        try:
+            download_video(args.bvid, args.page, args.start, args.end)
+        except Exception as e:
+            print(f"[warn] 预下载视频失败（字幕 ASR 兜底可能不可用）："
+                  f"{type(e).__name__}: {str(e)[:100]}")
+
+    # Step 1: Download subtitles（失败时自动走本地 ASR）
     sub_txt_path = ""
     if args.subtitle:
         sub_txt_path = download_subtitles(args.bvid, args.page, start_sec, end_sec)
@@ -823,7 +862,8 @@ def main():
     if sub_txt_path:
         ad_keywords = [k.strip() for k in args.ad_keywords.split(",") if k.strip()] or None
         ad_segments = detect_ad_segments(sub_txt_path, keywords=ad_keywords,
-                                         context_seconds=args.ad_context)
+                                         context_seconds=args.ad_context,
+                                         min_hits=args.ad_min_hits)
 
     if args.no_video:
         print("[no-video] 跳过视频下载与抽帧，仅保留字幕（纯文字笔记模式）")

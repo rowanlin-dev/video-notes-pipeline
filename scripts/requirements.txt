@@ -1,12 +1,23 @@
 yt-dlp
 imagehash
-av
+# PyAV 不钉上界：15+ 移除了 av.open(..., metadata_errors=...)，
+# scripts/audio_compat.py 会在运行时自动切到 ffmpeg 解码，任意 av 版本都能跑。
+# 强行钉死旧版反而伤通用性（部分平台/Python 版本没有预编译 wheel，只能源码编译）。
+av>=11
 rapidocr-onnxruntime
 python-docx
+markdown
 Pillow
 requests
 python-dotenv
-# ASR 兜底（B站 AI 字幕串台/缺失时自动启用）
-faster-whisper
+numpy
+# ASR 兜底（B站 AI 字幕 403 / 风控 / 串台 / 缺失时自动启用）
+faster-whisper>=1.0
+# openai SDK 是可选的：md_note.py / note_subject.py 会优先用它，
+# 未安装时自动退回 requests 调 /chat/completions，因此不列为必需依赖。
 # 注意：PDF 默认用系统 Edge/Chrome 无头打印（Windows 10 自带 Edge，无需额外依赖）。
 # 仅当你想用 weasyprint 兜底（无浏览器环境）时才需要装 scripts/requirements-optional.txt
+#
+# 装完务必跑：python scripts/doctor.py
+# 它会做「1 秒音频 → 解码 → 真实转写」的端到端冒烟，
+# 只检查 import 成功是抓不到 av / faster-whisper 这类破坏性变更的。

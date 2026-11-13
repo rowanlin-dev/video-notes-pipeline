@@ -9,7 +9,8 @@ echo   全程使用国内镜像，无需手动下载任何东西
 echo ================================================================
 echo.
 
-set "PY_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple"
+:: 阿里云源对 pip 25.x / 26.x 都可用；清华源对 pip 26.x 可能返回 403
+set "PY_MIRROR=https://mirrors.aliyun.com/pypi/simple"
 set "PY_EXE_URL=https://registry.npmmirror.com/-/binary/python/3.11.9/python-3.11.9-amd64.exe"
 set "REPO_ZIP=https://ghproxy.net/https://github.com/rowanlin-dev/video-notes-pipeline/archive/refs/heads/main.zip"
 set "FFMPEG_ZIP=https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
@@ -19,7 +20,7 @@ set "INSTALL_DIR=%USERPROFILE%\video-notes-pipeline"
 :: ------------------------------------------------------------------
 :: 1) Python（Win10 默认没有，先检测，缺失则从国内镜像静默装）
 :: ------------------------------------------------------------------
-echo [1/5] 检查 Python 3.9+ ...
+echo [1/6] 检查 Python 3.9+ ...
 where python >nul 2>nul
 if errorlevel 1 (
     echo   未检测到 Python，从 npmmirror 下载安装（约 25MB）...
@@ -32,7 +33,7 @@ if errorlevel 1 (
 ) else (
     python --version
 )
-:: 永久把 pip 切到清华源（之后所有 pip 都走国内）
+:: 永久把 pip 切到国内源（之后所有 pip 都走国内）
 python -m pip config set global.index-url %PY_MIRROR% >nul 2>nul
 python -m pip install --upgrade pip -i %PY_MIRROR% >nul 2>nul
 echo.
@@ -40,7 +41,7 @@ echo.
 :: ------------------------------------------------------------------
 :: 2) 拉代码（用 ghproxy 镜像，免 git 也能装）
 :: ------------------------------------------------------------------
-echo [2/5] 获取仓库代码（via ghproxy 镜像）...
+echo [2/6] 获取仓库代码（via ghproxy 镜像）...
 if exist "%INSTALL_DIR%" (
     echo   已存在 %INSTALL_DIR%，跳过下载。
 ) else (
@@ -57,7 +58,7 @@ echo.
 :: ------------------------------------------------------------------
 :: 3) FFmpeg（解压到 C:\ffmpeg\bin，pipeline 会自动识别，无需加 PATH）
 :: ------------------------------------------------------------------
-echo [3/5] 检查 FFmpeg ...
+echo [3/6] 检查 FFmpeg ...
 if exist "%FFMPEG_DIR%\bin\ffmpeg.exe" (
     echo   已存在：%FFMPEG_DIR%\bin\ffmpeg.exe
 ) else (
@@ -73,16 +74,16 @@ if exist "%FFMPEG_DIR%\bin\ffmpeg.exe" (
 echo.
 
 :: ------------------------------------------------------------------
-:: 4) Python 依赖（清华镜像）
+:: 4) Python 依赖（国内镜像）
 :: ------------------------------------------------------------------
-echo [4/5] 安装 Python 依赖（清华镜像，可能要几分钟）...
+echo [4/6] 安装 Python 依赖（国内镜像，可能要几分钟）...
 python -m pip install -r scripts/requirements.txt -i %PY_MIRROR%
 echo.
 
 :: ------------------------------------------------------------------
 :: 5) 预下载 ASR 模型（HF 镜像 + 内存自适应，避免首次跑视频时卡住）
 :: ------------------------------------------------------------------
-echo [5/5] 预下载 faster-whisper 模型（HF 镜像）...
+echo [5/6] 预下载 faster-whisper 模型（HF 镜像）...
 
 :: 检测可用内存（GB）
 for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "& { (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB - [math]::Round(1.5) }"`) do set "AVAIL_GB=%%a"
@@ -93,14 +94,15 @@ set "HF_ENDPOINT=https://hf-mirror.com"
 set "HF_HUB_DISABLE_XET=1"
 python -m pip install -U huggingface_hub -i %PY_MIRROR% >nul 2>nul
 
+:: huggingface-hub 2.x 已移除 huggingface-cli，命令改为 hf download
 :: 模型 A：small（稳定运行，效率较好，~2GB）— 内存充裕时用
 echo.
 echo   下载模型 A：faster-whisper-small（稳定运行，效率较好，约 2GB）
 echo     适用场景：内存 ≥ 8GB 的机器，默认 ASR 使用此模型
-huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
+hf download Systran/faster-whisper-small --local-dir models/faster-whisper-small
 if errorlevel 1 (
     echo   [提示] small 模型下载失败，可稍后手动重试：
-    echo   set HF_ENDPOINT=https://hf-mirror.com ^& huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
+    echo   set HF_ENDPOINT=https://hf-mirror.com ^& hf download Systran/faster-whisper-small --local-dir models/faster-whisper-small
 ) else (
     echo   small 模型下载完成
 )
@@ -110,10 +112,10 @@ echo.
 echo   下载模型 B：faster-whisper-base（内存紧张时使用，约 0.6GB）
 echo     适用场景：内存 < 8GB 或运行其他应用时，ASR 自动切换到此模型
 echo     相比 small 精度略低，但内存占用仅 1/3，速度更快
-huggingface-cli download Systran/faster-whisper-base --local-dir models/faster-whisper-base
+hf download Systran/faster-whisper-base --local-dir models/faster-whisper-base
 if errorlevel 1 (
     echo   [提示] base 模型下载失败，可稍后手动重试：
-    echo   set HF_ENDPOINT=https://hf-mirror.com ^& huggingface-cli download Systran/faster-whisper-base --local-dir models/faster-whisper-base
+    echo   set HF_ENDPOINT=https://hf-mirror.com ^& hf download Systran/faster-whisper-base --local-dir models/faster-whisper-base
 ) else (
     echo   base 模型下载完成
 )
@@ -130,15 +132,28 @@ if !AVAIL_GB! GEQ 8 (
 echo.
 
 :: ------------------------------------------------------------------
-:: 收尾
+:: 6) 安装自检（端到端 ASR 冒烟，静态 import 检查抓不到 av 破坏性变更）
 :: ------------------------------------------------------------------
 if not exist .env copy .env.example .env >nul
+echo [6/6] 运行安装自检 ...
+python scripts/doctor.py
+if errorlevel 1 (
+    echo   [警告] 自检存在 FAIL，请按上面的提示修复后再跑视频。
+) else (
+    echo   自检通过。
+)
+echo.
+
+:: ------------------------------------------------------------------
+:: 收尾
+:: ------------------------------------------------------------------
 echo ================================================================
 echo   安装完成！下一步：
 echo   1) 用记事本打开 %INSTALL_DIR%\.env，填入 VISION_API_KEY
 echo      （智谱 GLM 免费档：https://open.bigmodel.cn/）
 echo   2) 可选但强烈建议：配置 bilibili_cookies.txt（拿官方字幕）
-echo   3) 跑起来：python run_pipeline.py ^<BV号^>
+echo   3) 自检：python scripts/doctor.py --live（顺带验 Key / Cookie）
+echo   4) 跑起来：python run_pipeline.py ^<BV号^> --no-ima
 echo   详细用法见 %INSTALL_DIR%\README.md
 echo ================================================================
 pause

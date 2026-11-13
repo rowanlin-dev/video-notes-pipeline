@@ -18,6 +18,9 @@ os.environ.setdefault("MKL_NUM_THREADS", "2")
 
 from faster_whisper import WhisperModel
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from audio_compat import decode_audio_any
+
 # 内置模型尺寸映射
 MODEL_DIRS = {
     "tiny": "models/faster-whisper-tiny",
@@ -61,7 +64,7 @@ print(f"加载模型 ({_model_size_name})...", flush=True)
 model = WhisperModel(MODEL_DIR, device="cpu", compute_type="int8", cpu_threads=2)
 print("开始识别...", flush=True)
 t0 = time.time()
-segments, info = model.transcribe(AUDIO, language="zh", beam_size=5,
+segments, info = model.transcribe(decode_audio_any(AUDIO), language="zh", beam_size=5,
                                   vad_filter=True, vad_parameters={"min_silence_duration_ms": 500})
 print(f"检测语言: {info.language} (p={info.language_probability:.2f})", flush=True)
 

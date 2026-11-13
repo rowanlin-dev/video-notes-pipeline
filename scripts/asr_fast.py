@@ -16,6 +16,9 @@ os.environ.setdefault("MKL_NUM_THREADS", "2")
 
 from faster_whisper import WhisperModel
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from audio_compat import decode_audio_any
+
 MODEL_DIRS = {
     "tiny": "models/faster-whisper-tiny",
     "base": "models/faster-whisper-base",
@@ -54,7 +57,7 @@ print("开始识别...", flush=True)
 t0 = time.time()
 
 # 无 VAD 过滤器，速度快很多，但内存占用稍高
-segments, info = model.transcribe(AUDIO, language="zh", beam_size=5, vad_filter=False)
+segments, info = model.transcribe(decode_audio_any(AUDIO), language="zh", beam_size=5, vad_filter=False)
 print(f"检测语言: {info.language} (p={info.language_probability:.2f})", flush=True)
 
 body = []
