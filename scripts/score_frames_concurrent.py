@@ -75,9 +75,29 @@ except ImportError:
 DEFAULT_BASE_URL = os.getenv('VISION_BASE_URL', os.getenv('SOPHNET_BASE_URL', "https://api.openai.com/v1"))
 DEFAULT_MODEL = os.getenv('VISION_MODEL', os.getenv('SOPHNET_MODEL', "gpt-4o"))
 DEFAULT_API_KEY = os.getenv('VISION_API_KEY', os.getenv('SOPHNET_API_KEY', ""))
-DEFAULT_WORKERS = 16
+# 兼容旧配置项 WORKERS；默认 4（免费视觉档并发额度很低，16 极易触发 429）
+DEFAULT_WORKERS = int(os.getenv("VISION_WORKERS", os.getenv("WORKERS", "4")))
 DEFAULT_TIMEOUT = 120
-DEFAULT_MAX_RETRIES = 3
+DEFAULT_MAX_RETRIES = int(os.getenv("VISION_MAX_RETRIES", "5"))
+
+# 全局限流闸门：任一线程遇到 429，其它线程在下一次请求前一起退避，
+# 避免多线程同时打满免费额度造成连锁失败。
+import threading
+_RATE_LOCK = threading.Lock()
+_RATE_UNTIL = 0.0
+
+
+def _respect_rate_limit():
+    with _RATE_LOCK:
+        wait = _RATE_UNTIL - time.time()
+    if wait > 0:
+        time.sleep(min(wait, 20.0))
+
+
+def _trip_rate_limit(cooldown=8.0):
+    global _RATE_UNTIL
+    with _RATE_LOCK:
+        _RATE_UNTIL = max(_RATE_UNTIL, time.time() + cooldown)
 
 # 模型有时会把 JSON 键名连同内容一起翻译成中文，导致字段取不到值。
 # 这里把常见的中文键名映射回标准英文键名。
@@ -286,6 +306,7 @@ def process_one_frame(
 
     last_error = None
     for attempt in range(1, max_retries + 1):
+        _respect_rate_limit()
         try:
             payload = build_payload(prompt)
             content = call_vision(headers, base_url, payload, timeout)
@@ -312,6 +333,8 @@ def process_one_frame(
             return frame_name, result
         except Exception as e:
             last_error = f"{type(e).__name__}: {str(e)}"
+            if "429" in last_error or "1113" in last_error:
+                _trip_rate_limit(min(4.0 * attempt, 16.0))
             if attempt < max_retries:
                 time.sleep(2 ** attempt)  # 指数退避
 
@@ -450,8 +473,15 @@ def main():
     print(f"[INFO] 结果已保存到: {out_path}")
 
     if failed > 0:
-        print("[WARN] 部分帧分析失败，请检查输出 JSON 中的 error 字段")
-        sys.exit(2)
+        if success == 0:
+            print("[ERROR] 全部帧分析失败，请检查 API Key / 额度 / 网络 / 并发设置")
+            sys.exit(2)
+        # 部分失败是免费档常态（429 限流）：结果 JSON 已保存，
+        # 下游 auto_select 只用成功帧，不应让几张失败帧毁掉整条流水线。
+        print(f"[WARN] {failed}/{len(results)} 帧分析失败（多为限流），"
+              f"已有 {success} 帧成功，流水线继续")
+        print("[WARN] 需要补齐时可降低 --workers / 提高 --max-retries 后清空该 JSON 重打分"
+              "（--resume 会跳过带 error 的帧，不能直接续）")
 
 
 if __name__ == "__main__":

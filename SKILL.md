@@ -109,23 +109,37 @@ python scripts/fix_bili_timestamps.py runs/BV1xx411c7mD_p1/output/标题.md 1 --
 无论 Windows / macOS / Linux，**是否挂 VPN 都能装**：AI 先探测系统与网络，直连不稳就自动切国内镜像，有代理则直连更快。
 
 ```bash
-# 1) 克隆（GitHub 直连不稳时加 ghproxy 前缀）
-git clone https://ghproxy.net/https://github.com/rowanlin-dev/video-notes-pipeline.git
-#   （前缀不通换 https://mirror.ghproxy.com/ 或 https://gitclone.com/github.com/...）
+# 1) 克隆（优先直连，失败再逐级换镜像）
+git clone https://github.com/rowanlin-dev/video-notes-pipeline.git
+#   git clone https://ghproxy.net/https://github.com/rowanlin-dev/video-notes-pipeline.git
+#   git clone https://gitclone.com/github.com/rowanlin-dev/video-notes-pipeline.git
+#   注意：mirror.ghproxy.com 常返回 502，不要作为首选。
 
-# 2) 装依赖（pip 永久切清华源，避免 PyPI 直连超时）
-pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# 2) 装依赖（国内镜像；pip 26.x 对清华源可能 403，阿里云源对 25.x/26.x 都可用）
+pip config set global.index-url https://mirrors.aliyun.com/pypi/simple
+#   备选：pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 pip install -r scripts/requirements.txt
 
 # 3) ffmpeg（抽帧必需，不依赖 chocolatey）
 #    Windows：下便携版解压到 C:\ffmpeg，pipeline 自动识别 C:\ffmpeg\bin；或 winget install -e --id Gyan.FFmpeg
 #    macOS：brew install ffmpeg   |   Ubuntu/Debian：sudo apt-get install ffmpeg
+
+# 4) 安装自检（必做，不要跳过）
+python scripts/doctor.py
+#    会做「1 秒音频 → 解码 → 真实转写」的端到端冒烟；
+#    只验证 import / --help 是抓不到 av 与 faster-whisper 的破坏性变更的。
+#    加 --live 可顺带校验 API Key 与 B站 SESSDATA 是否真的可用。
 ```
 
-> 🪟 **Windows 不想敲命令**：直接双击仓库里的 `setup_windows.bat`，自动装 Python、拉仓库、切镜像、装 ffmpeg、预下载 ASR 模型，全程走国内源、零手动。
+> **为什么必须有第 4 步**：曾出现过「依赖全装好、import 全通过、`WhisperModel(...)` 能构造、CLI `--help` 正常」，但一跑视频就崩的情况——PyAV 15+ 移除了 `av.open(..., metadata_errors=...)`，而 faster-whisper ≤1.2.x 仍在传。静态检查完全测不到，只有真实转写才会触发。`doctor.py` 把这一环变成安装验收的硬指标，并会打印当前走的是 av 原生解码还是 ffmpeg 兜底。
 
-> ASR 模型（无官方字幕时兜底，国内用镜像）：
-> `HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small`
+> **依赖版本策略**：`requirements.txt` 只写下界、不把 `av` 钉死到某个旧版本。`scripts/audio_compat.py` 会在运行时自动选择解码路径（旧 av 走原生、新 av 走 ffmpeg），因此任意 av 版本都能跑；强行降级旧版反而可能在部分平台 / Python 版本上没有预编译 wheel、只能源码编译。
+
+> 🪟 **Windows 不想敲命令**：直接双击仓库里的 `setup_windows.bat`，自动装 Python、拉仓库、切镜像、装 ffmpeg、预下载 ASR 模型，全程走国内源、零手动；装完同样建议跑一次 `doctor.py`。
+
+> ASR 模型（官方字幕不可用时自动兜底，国内用镜像）：
+> `HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 hf download Systran/faster-whisper-small --local-dir models/faster-whisper-small`
+> 注意：`huggingface-hub` 2.x 已移除 `huggingface-cli`，命令是 `hf download`。
 
 ## 配置
 
@@ -578,7 +592,7 @@ pip install faster-whisper
 ffmpeg -y -i <video>.mp4 -vn -ar 16000 -ac 1 /tmp/audio_16k.wav
 # 下载模型（国内需镜像 + 禁用 xet）
 HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 \
-  huggingface-cli download Systran/faster-whisper-small --local-dir models/faster-whisper-small
+  hf download Systran/faster-whisper-small --local-dir models/faster-whisper-small
 # 语音转文字(ASR)：WhisperModel(..., device="cpu", compute_type="int8")，transcribe(language="zh")
 python scripts/asr_subtitle.py /tmp/audio_16k.wav runs/<BV>_p<N>/<BV>_p<N>_subtitles.json
 ```
@@ -598,15 +612,80 @@ md2pdf 默认调用系统 Edge/Chrome 渲染（Windows 10 自带 Edge，无需�
 
 ### 4. 智谱 API 429 限流（并发打分/提取）
 
-`score_frames_concurrent.py` 并发高时易 429。对策：
+免费档并发额度很低，旧默认 16 线程会连锁 429；更糟的是旧实现「部分帧失败 → `exit 2`」，
+几张限流失败的帧就会把 Step 3 判死、整条流水线中断。已内置的通用对策：
 
-- 降低并发重跑：`--workers 2 --max-retries 5 --resume`
-- ⚠️ resume 按文件名跳过，**失败帧也带 error 会被跳过**——最稳妥是清空输出 JSON 后对整个目录重打分
+- `DEFAULT_WORKERS` 默认降到 **4**，可用 `VISION_WORKERS` 覆盖（同时兼容旧配置项 `WORKERS`）；免费档在 `.env` 里建议设 2-4。
+- **全局限流闸门**：任一线程遇到 429 / 1113，其它线程在下一次请求前一起退避；`VISION_MAX_RETRIES` 默认 5。
+- **部分帧失败不再中断流水线**：结果 JSON 已保存，下游 `auto_select` 只用成功帧；只有全部帧失败才返回非零。
+- 手动补打分：`--workers 2 --max-retries 5`；⚠️ `--resume` 按文件名跳过，**失败帧也带 error 会被跳过**，最稳妥是清空输出 JSON 后对整个目录重打分。
 - ⚠️ **打分对象是 `selected/` 而非 `scene/`**：scene/ 帧名带时间戳（`frame_0001_00m00s.jpg`），selected/ 是纯编号（`frame_0001.jpg`），scores JSON 的 key 必须与 auto_select 输入的 selected/ 一致
 
 ### 5. deepseek 批量修正字幕的行号陷阱
 
 分批让 LLM 修正字幕时，每批 LLM 会重新编号（续编行号），超出批内校验被丢弃、只回写第一批。对策：**不依赖 LLM 回传行号**，改为按输出顺序拼接 + 只提取 `[时间戳] 文本` 行；每轮从原始 JSON 重建输入保证幂等（见 `scripts/fix_subtitles.py`）。
+
+### 6. 新版 PyAV 让本地 ASR 全线崩溃（静态检查发现不了）
+
+症状：装完 `import faster_whisper`、`WhisperModel(...)` 能构造、`--help` 正常，一跑 ASR 就报
+`TypeError: open() got an unexpected keyword argument 'metadata_errors'`。
+原因：faster-whisper ≤1.2.x 的 `audio.decode_audio()` 仍传 `metadata_errors`，PyAV 15+ 已移除该参数。
+对策：**不要靠降级 av**（部分平台 / Python 版本没有旧版预编译 wheel，只能源码编译还可能失败）。
+`scripts/audio_compat.py` 会自动选择「旧 av 原生解码」或「ffmpeg 转 16k wav + numpy 读入」，
+`asr_subtitle.py` / `asr_fast.py` / `run_asr_direct.py` 均已接入。
+`python scripts/doctor.py` 会在安装阶段用 1 秒音频真实转写，并打印当前走的是哪条路径。
+
+### 7. 官方 AI 字幕 CDN 403 / 风控（字幕列表非空但内容拿不到）
+
+症状：`player/wbi/v2` 明明返回了 `ai-zh` 字幕 URL，但 `aisubtitle.hdslb.com` 返回 403 HTML；
+旧代码 `json.loads` 直接抛异常让 Step 1 崩，而且因为字幕列表非空，压根不会进入 ASR 兜底。
+对策（已内置）：`download_subtitles()` 把「URL 为空 / 下载异常 / body 为空」三种情况统一转
+`_asr_fallback()`；同时 Step 1 会**先确保视频已落盘**——旧顺序是先取字幕后下视频，
+兜底时工作区还没有音轨，会静默产出空字幕。
+
+### 8. 场景检测 0 帧 → `selected/` 为空 → Step 3 崩
+
+症状：画面平滑变化的视频打印 `[scene] Detected 0 raw scene changes` 后 fallback 到固定间隔帧，
+但旧实现把帧写进 `fixed/`，而 `run_pipeline.py` 的 Step 2/3 仍读 `scene/`，
+于是 `No .jpg files found`、流水线在打分步骤失败。
+对策（已内置）：fallback 帧直接写入 `scene/`，保持目录契约；也可显式 `--mode fixed --interval 20`。
+
+### 9. 广告词表误伤正文 / `.env` 旧配置覆盖代码默认值
+
+症状：科技视频里「资料 / 免费 / 课程」极常见，旧词表单词即命中，再把前后各扩 20 秒，
+会把「三者组合 + 结尾结论」整段跳过截图（只影响截图，不删字幕）。
+对策（已内置）：默认词表只留明确营销词；`detect_ad_segments()` 改为单行需命中 ≥2 个不同词
+（`AD_MIN_HITS=2`，设 1 恢复旧行为）；`AD_CONTEXT_SECONDS` 默认 20 → 10。
+⚠️ **已有 `.env` 若从旧 `.env.example` 复制，仍会覆盖代码默认值**，升级后请对照新模板更新
+`AD_KEYWORDS` / `AD_CONTEXT_SECONDS` / `FRAME_TRASH_KEYWORDS`。
+
+### 10. 安装源与 CLI 的破坏性变更
+
+- pip 26.x 对清华源可能返回 403（pip 25.x 正常）；`setup_windows.bat` 已默认切阿里云源，安装章节给出双源。
+- `huggingface-hub` 2.x 移除了 `huggingface-cli`，命令改为 `hf download`（脚本与文档已同步）。
+- WorkBuddy 等 Agent 终端里 `python` 可能指向没装依赖的解释器，而 `run_pipeline.py` 用
+  `sys.executable` 拉起所有子脚本；用 `doctor.py` 打印的解释器路径确认，必要时显式 `py -3.12 run_pipeline.py`。
+
+### 11. 最后两步才发现「缺少 openai / markdown」
+
+症状：前五步全部通过，Step 6 写正文报 `RuntimeError: 缺少依赖：pip install openai`；
+补完再跑，Step 6b 转 PDF 又报 `RuntimeError: 缺少依赖：pip install markdown`。
+原因：`md_note.py` / `note_subject.py` / `md2pdf.py` 都用 `try: import ...` 把依赖做成可选，
+而 `requirements.txt` 从未列出 `markdown`；静态 import 检查测不到（都被 try/except 吞了），
+只有真正生成正文 / 渲染 PDF 时才炸。
+对策（已内置）：
+
+- `call_llm()` 在 `openai` SDK 缺失时自动退回 `requests` 调 `/chat/completions`
+  （项目本来就依赖 requests，所有配置的端点都是 OpenAI 兼容的）；装了 SDK 行为不变，
+  **openai 保持可选、不新增必需依赖**。
+- `markdown` 是 PDF 渲染的必需依赖，已补进 `requirements.txt` 与 `doctor.py` 检查项。
+
+> 这类「可选 import 藏到最后一步才炸」的依赖，正是 `doctor.py` 要把
+> `required` 清单和端到端冒烟一起检查的原因。
+
+> **统一对策**：以上第 6/7/8/10/11 类问题都不会被「import 成功 + --help 正常」发现。
+> 安装与升级后一律先跑 `python scripts/doctor.py`（`--live` 追加 Key / Cookie 连通性），
+> FAIL 修完再跑视频。
 
 ## 依赖
 

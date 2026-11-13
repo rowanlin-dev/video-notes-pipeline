@@ -614,9 +614,43 @@ def generate_chunked(title, entries, frames, segs, template, target,
     return full
 
 
+def _balance_hint(model, msg):
+    low = msg.lower()
+    if "402" in msg or "余额" in msg or "insufficient" in low or "quota" in low:
+        return RuntimeError(
+            f"文本模型 {model} 调用失败（余额/额度不足）：{msg}\n"
+            "处理建议：① 换上额度充足的 TEXT_MODEL；"
+            "② 或改用 --emit-brief，由宿主 Agent 的模型撰写笔记（无需外部 Key）")
+    return None
+
+
 def call_llm(prompt, api_key, base_url, model, timeout=300):
+    """调用 OpenAI 兼容的 /chat/completions 生成正文。
+
+    优先用 openai SDK；未安装时自动退回 requests（已在 requirements.txt 中），
+    避免「依赖全装好、跑到最后一步写正文才报『缺少 openai』」。
+    """
     if OpenAI is None:
-        raise RuntimeError("缺少依赖：pip install openai")
+        import requests
+        url = base_url.rstrip("/") + "/chat/completions"
+        try:
+            r = requests.post(
+                url,
+                headers={"Authorization": "Bearer " + api_key,
+                         "Content-Type": "application/json"},
+                json={"model": model,
+                      "messages": [{"role": "user", "content": prompt}],
+                      "temperature": 0.3},
+                timeout=timeout,
+            )
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
+            data = r.json()
+            return (data["choices"][0]["message"]["content"] or "").strip()
+        except Exception as e:
+            hint = _balance_hint(model, str(e))
+            raise hint or e
+
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
     try:
         resp = client.chat.completions.create(
@@ -625,14 +659,8 @@ def call_llm(prompt, api_key, base_url, model, timeout=300):
             temperature=0.3,
         )
     except Exception as e:
-        msg = str(e)
-        low = msg.lower()
-        if "402" in msg or "余额" in msg or "insufficient" in low or "quota" in low:
-            raise RuntimeError(
-                f"文本模型 {model} 调用失败（余额/额度不足）：{msg}\n"
-                "处理建议：① 换上额度充足的 TEXT_MODEL；"
-                "② 或改用 --emit-brief，由宿主 Agent 的模型撰写笔记（无需外部 Key）")
-        raise
+        hint = _balance_hint(model, str(e))
+        raise hint or e
     return resp.choices[0].message.content.strip()
 
 
