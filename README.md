@@ -62,6 +62,12 @@
    （huggingface-hub 2.x 已移除 huggingface-cli，命令是 hf download；有代理时直连也行，去掉 HF_ENDPOINT 即可）
 6. 安装自检（必做）：python scripts/doctor.py
    会做「1 秒音频 → 解码 → 真实转写」的端到端冒烟，把 PyAV / ffmpeg / 模型 / .env 旧配置问题拦在跑视频之前。
+7. 注册成 Agent 的用户级 skill（必做，否则对话里说「总结这个视频」不会触发，只能在仓库目录手动跑）：
+   python scripts/install_skill.py
+   它会自动找到已安装 Agent 的 skills 目录并建立目录链接（Windows 目录联接 Junction，macOS/Linux symlink），
+   仓库更新后 Agent 直接读到最新版；检测不到时用 --dest <你的 Agent 的 skills 目录> 手动指定，--copy 可改为复制。
+   已存在的旧手抄版会自动备份到 <Agent 目录>/../skill-backups/，不会误删。
+   注册完重启 Agent（WorkBuddy 重启后会重新扫描 skills 目录并刷新技能列表），再说触发词。
 
 装完把 .env.example 复制为 .env 填 API Key，配好 bilibili_cookies.txt，读 README 了解用法。
 ```
@@ -796,8 +802,9 @@ B站 WAF 风控，按序排查：① 先配 cookie（`set_cookie.py`）——未
 
 - 直接在本项目目录里和 Agent 对话，让它执行 `python run_pipeline.py <BV号>` 即可；Agent 会按    
   `SKILL.md` 的流程跑完整条流水线。
-- 想一句话触发：把本项目封装为 WorkBuddy 用户级 skill（放到    
-  `~/.workbuddy/skills/video-notes-pipeline/`），之后直接在对话框说「总结这个 B站视频」。
+- 想一句话触发：先 `python scripts/install_skill.py` 注册（WorkBuddy 链接到    
+  `~/.workbuddy/skills/video-notes-pipeline/`，Claude Code 为 `~/.claude/skills/`）。**重启 WorkBuddy** 使技能列表重新扫描，之后直接在对话框说「总结这个 B站视频」即可。
+- ⚠️ 只把仓库下载到本地、或只手动复制一份 `SKILL.md` 进去是**不够**的：Agent 只扫描自己的 skills 目录，复制版既缺脚本、又会随仓库更新而过期（本机就出现过停在 v1.1.0 的旧副本）。用脚本建目录链接可同时避免这两点。
 - ima 自动入库依赖 WorkBuddy 的 ima 连接器：需先在连接器管理里信任 / 连接 ima，    
   再运行带 `--route` 的流水线（见上方「📚 入 ima 知识库」）。
 
@@ -864,6 +871,13 @@ video-notes-pipeline/
 ---
 
 ## 🆕 更新日志
+
+### v1.6.2 —— 安装流程补注册到 Agent
+
+- **新增 `scripts/install_skill.py`**：把仓库注册为 WorkBuddy / Claude Code 的用户级 skill，自动探测 skills 目录并建目录链接（Windows Junction、macOS/Linux symlink），仓库更新后无需重复注册；链接不可用时自动退回复制。
+- **旧副本安全处理**：已存在的旧版本（例如只含 `SKILL.md` 的 v1.1.0 手抄版）备份到 `<Agent 目录>/../skill-backups/`，既不删除，也不会被当成第二个同名 skill 扫到。
+- **一键安装补第 7 步**：README 的复制粘贴安装流程、`SKILL.md` 安装步骤、`setup_windows.bat` 都补上了注册环节，避免「装了本地但对话里触发不了」。
+- ⚠️ 注册后需重启 Agent（WorkBuddy 重启才会重新扫描 skills 目录）。
 
 ### v1.6.1 —— 跨环境健壮性修复
 

@@ -135,12 +135,25 @@ echo.
 :: 6) 安装自检（端到端 ASR 冒烟，静态 import 检查抓不到 av 破坏性变更）
 :: ------------------------------------------------------------------
 if not exist .env copy .env.example .env >nul
-echo [6/6] 运行安装自检 ...
+echo [6/7] 运行安装自检 ...
 python scripts/doctor.py
 if errorlevel 1 (
     echo   [警告] 自检存在 FAIL，请按上面的提示修复后再跑视频。
 ) else (
     echo   自检通过。
+)
+echo.
+
+:: ------------------------------------------------------------------
+:: 7) 注册为 Agent 用户级 skill（否则对话里说触发词不会命中）
+:: ------------------------------------------------------------------
+echo [7/7] 注册到 WorkBuddy / Claude Code 的 skills 目录 ...
+python scripts\install_skill.py
+if errorlevel 1 (
+    echo   [提示] 未检测到 Agent 的 skills 目录，可稍后手动执行：
+    echo          python scripts\install_skill.py --dest ^<你的 Agent skills 目录^>
+) else (
+    echo   注册完成，重启 Agent 后生效。
 )
 echo.
 

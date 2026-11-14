@@ -1,6 +1,6 @@
 ---
 name: video-notes-pipeline
-version: 1.6.1
+version: 1.6.2
 description: "从 B 站 / 小红书 / 本地视频一键生成带截图、可点击时间戳的 Markdown + PDF 图文笔记，可选归档进 ima 知识库。下载视频+字幕→场景检测抽帧→OCR去重→AI视觉打分→自动精选→提取图中内容→融合生成 MD/PDF→(可选)入 ima。"
 tags: [bilibili, xiaohongshu, video, notes, OCR, vision, subtitles, markdown, pdf, ima, local]
 triggers:
@@ -129,6 +129,14 @@ python scripts/doctor.py
 #    会做「1 秒音频 → 解码 → 真实转写」的端到端冒烟；
 #    只验证 import / --help 是抓不到 av 与 faster-whisper 的破坏性变更的。
 #    加 --live 可顺带校验 API Key 与 B站 SESSDATA 是否真的可用。
+
+# 5) 注册为用户级 skill（必做，否则对话里说触发词不会命中）
+python scripts/install_skill.py
+#    自动链接到 ~/.workbuddy/skills/video-notes-pipeline（WorkBuddy）
+#            与 ~/.claude/skills/video-notes-pipeline（Claude Code）
+#    Windows 用目录联接 Junction、macOS/Linux 用 symlink，仓库更新后无需重新注册；
+#    其他 Agent 用 --dest <skills 目录>，不支持链接的环境加 --copy。
+#    注册后重启 Agent，使技能列表重新扫描。
 ```
 
 > **为什么必须有第 4 步**：曾出现过「依赖全装好、import 全通过、`WhisperModel(...)` 能构造、CLI `--help` 正常」，但一跑视频就崩的情况——PyAV 15+ 移除了 `av.open(..., metadata_errors=...)`，而 faster-whisper ≤1.2.x 仍在传。静态检查完全测不到，只有真实转写才会触发。`doctor.py` 把这一环变成安装验收的硬指标，并会打印当前走的是 av 原生解码还是 ffmpeg 兜底。
