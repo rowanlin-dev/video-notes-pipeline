@@ -1,8 +1,9 @@
-# Bilibili / Xiaohongshu Video Notes (tool entry · v1.5.0)
+# Bilibili / Xiaohongshu Video Notes (tool entry · v1.6.3)
 
 Turn Bilibili educational videos, Xiaohongshu (RED) video notes, or local video files into illustrated **Markdown + PDF** notes with clickable timestamps, optionally archived into the ima knowledge base. Models are swappable — any OpenAI-compatible endpoint works.
 
-> Current version **v1.5.0**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
+> Current version **v1.6.3**, kept in sync with `SKILL.md`; when SKILL.md changes this file is updated too. The endpoint auto-updater (`update_skill.py`) already lists this file in its whitelist.
+> Engineering docs: `docs/README.md` (standards, decisions, CLI contracts, changelog, setup).
 
 See **SKILL.md** for the full reference. This file is a quick-start for AI agents/collaborators.
 

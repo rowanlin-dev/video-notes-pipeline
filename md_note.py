@@ -30,11 +30,15 @@ except ImportError:
 # 学科自适应：从 scripts/ 导入模板 + 分类 + 字数预算
 sys.path.insert(0, str(Path(__file__).resolve().parent / "scripts"))
 try:
-    from note_subject import (SUBJECT_TEMPLATES, classify_subject, compute_note_budget)
+    from note_subject import (SUBJECT_TEMPLATES, AUDIENCE_LABELS,
+                              classify_profile, classify_subject, compute_note_budget)
 except Exception:
     SUBJECT_TEMPLATES = {}
+    AUDIENCE_LABELS = {"informed": "有相关常识的读者"}
+    def classify_profile(*a, **k):
+        return {"subject": "general", "audience": "informed", "reason": "降级"}
     def classify_subject(*a, **k): return "general"
-    def compute_note_budget(*a, **k): return 3000
+    def compute_note_budget(*a, **k): return (1200, 2400)
 
 
 # ---------------------------------------------------------------- 时间戳解析
@@ -138,6 +142,9 @@ def load_frames(final_dir, origin_map_path, extract_json, scores_json, interval,
             "reasoning": _as_text(info.get("reasoning")),
             "tables": _as_list(info.get("tables")),
             "score": sinfo.get("score", 0),
+            # 图内文字提取失败（429/超时等）时保留标记：配图仍可用，
+            # 但简报要提示「仅有主题词，无图中文字」，避免正文臆造图内信息
+            "extract_error": str(info.get("error") or "").strip(),
         })
     return frames
 
@@ -227,7 +234,8 @@ _MINDMAP_RULE = (
     "这些是 flowchart 语法，混进 mindmap 会导致渲染失败。"
 )
 _MERMAID_PLACEHOLDER_RULE = (
-    "每个图下方用 `![图 N 描述](images/图_N_描述.svg)` 占位，N 从 1 递增。"
+    "脑图同样占用全篇统一的图号序列（与截图一起排，不另起 1），"
+    "可用 `![图 N 描述](images/图_N_描述.svg)` 占位或直接引用已渲染的 SVG。"
 )
 # 无截图时：脑图是唯一视觉元素，要求明确且占位说明必须给全。
 _NO_FRAME_FULL = _NO_FRAME_NOTE + _MINDMAP_RULE + "\n" + _MERMAID_PLACEHOLDER_RULE
@@ -244,8 +252,8 @@ _MINDMAP_WITH_FRAME = (
 )
 
 
-def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frames, sub_level=2,
-                  mind_map=False, context=""):
+def build_prompt(title, frames_desc, subtitle, template, target_range, has_frames, sub_level=2,
+                  mind_map=False, context="", audience="informed"):
     """按学科模板 + 目标字数拼装笔记生成 prompt（保留图文穿插规则）。
 
     三种视觉模式：
@@ -262,7 +270,8 @@ def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frame
 
     head = (f"{role}\n\n"
             f"请基于以下素材，写一份结构清晰、可直接入知识库的 Markdown 笔记。"
-            f"本视频学科归类为「{label}」，请使用与之匹配的行文结构与侧重点。\n\n"
+            f"本视频学科归类为「{label}」，目标读者为「{AUDIENCE_LABELS.get(audience, audience)}」，"
+            f"请据此决定术语密度、铺垫深度与讲法。\n\n"
             f"【视频标题】{title}\n\n")
     if context:
         head += (f"【作者原文 / 作品简介（作者自述，可能与字幕重复，作为补充参考；"
@@ -299,9 +308,12 @@ def build_prompt(title, frames_desc, subtitle, template, target_chars, has_frame
         "4. 若截图/字幕里是流程图、架构图、公式、代码或操作步骤，要在正文用文字把逻辑讲清，让人不看图也懂。\n"
         "5. 不出现「本视频」「UP主」「这个视频」之类口语，直接讲内容本身。\n"
         "6. 全文简体中文。")
+    lo, hi = target_range
     parts.append(
-        f"★ 字数控制：本笔记目标约 {target_chars} 字（允许 +15%，但不得低于目标的 80%）。"
-        "信息密度优先——不要注水凑字数，但更不允许把课程压缩成目录式摘要。"
+        f"★ 篇幅参考：约 {lo}–{hi} 字（区间，不是硬指标）。"
+        "先按内容与读者决定大纲与讲法，篇幅自然落在这个区间即可。"
+        f"明显低于 {lo} 字通常意味着有内容被压缩或遗漏；明显高于 {hi} 字通常意味着"
+        "重复或注水。信息密度优先，不要为凑字数展开无关内容。"
         "字幕覆盖率是硬指标：每 5 分钟内容都必须有对应段落。")
     return head + "\n".join(parts) + "\n"
 
@@ -369,8 +381,8 @@ def _brief_frames_list(frames, bvid):
     return out
 
 
-def emit_brief(title, bvid, page, frames, subtitle, template, target,
-               entries, segs, args, mind_map=False, context=""):
+def emit_brief(title, bvid, page, frames, subtitle, template, target_range,
+               entries, segs, args, mind_map=False, context="", audience="informed"):
     """Agent 原生模式：把笔记生成所需的全部素材 + 写作 SPEC 导出为
     _brief.md（人/Agent 可读）与 _brief.json（结构化），供宿主 Agent 自带模型
     撰写笔记，全程不调用外部 LLM。返回 (brief_md, brief_json) 路径。"""
@@ -393,10 +405,14 @@ def emit_brief(title, bvid, page, frames, subtitle, template, target,
         "page": page,
         "is_local": is_loc,
         "subject_label": template.get("label"),
+        "audience": audience,
+        "audience_label": AUDIENCE_LABELS.get(audience, audience),
         "context": context,
         "source_label": getattr(args, "source_label", "") or "",
         "source_link": getattr(args, "source_link", "") or "",
-        "target_chars": target,
+        "target_range": list(target_range),
+        "target_chars": int(sum(target_range) / 2),
+        "failed_extract": [f["file"] for f in frames if f.get("extract_error")],
         "img_prefix": args.img_prefix,
         "output": str(out),
         "outline": template.get("outline", []),
@@ -415,13 +431,14 @@ def emit_brief(title, bvid, page, frames, subtitle, template, target,
             seg_sub = "\n".join(f"[{fmt_ts(sec)}] {t}" for sec, t in seg_entries)
             seg_frames = [f for f in frames if s0 <= f["seconds"] < s1]
             weight = len(seg_entries) / (len(entries) or 1)
-            seg_target = max(600, int(target * weight))
+            seg_lo = max(400, int(target_range[0] * weight))
+            seg_hi = max(seg_lo + 300, int(target_range[1] * weight))
             seg_payload.append({
                 "index": idx,
                 "start": fmt_ts(s0), "end": fmt_ts(s1),
                 "subtitle": seg_sub or "（本段无字幕，请仅依据截图信息撰写）",
                 "frames": _brief_frames_list(seg_frames, bvid),
-                "target_chars": seg_target,
+                "target_range": [seg_lo, seg_hi],
             })
         payload["segments"] = seg_payload
 
@@ -454,7 +471,9 @@ def _render_brief_md(p):
     else:
         L.append(f"- 来源：B站 `{p['bvid']}` · 分P {p['page']}")
     L.append(f"- 学科归类：{p['subject_label']}")
-    L.append(f"- 目标字数：约 **{p['target_chars']}** 字（允许 ±15% 浮动）")
+    L.append(f"- 目标受众：{p.get('audience_label') or '有相关常识的读者'}")
+    rng = p.get("target_range") or [p.get("target_chars", 0)]
+    L.append(f"- 篇幅参考：约 **{rng[0]}–{rng[-1]}** 字（区间，不是硬指标）")
     L.append(f"- 配图相对目录（相对本笔记）：`{p['img_prefix']}/`")
     L.append(f"- 输出文件：`{p['output']}`")
     L.append(f"- 配图数量：{n_img} 张")
@@ -470,7 +489,8 @@ def _render_brief_md(p):
     else:
         L.append(f"   `> 来源：[{p['bvid']}](https://www.bilibili.com/video/{p['bvid']}/?p={p['page']}) · P{p['page']} · 共 {n_img} 张图解`")
     outline = p.get("outline") or ["内容概要", "核心内容", "核心要点回顾"]
-    L.append("2. **结构要求**：严格按下面小节组织，每节一个 `##` 标题，顺序保持一致：")
+    L.append("2. **结构要求**：以下为该学科模板的小节骨架。按主题与受众决定讲法，"
+             "可合并/拆分小节，但主线顺序与每层关注点要保留，不要为凑小节硬拆：")
     L.append("   " + " / ".join(outline))
     if p["chunked"]:
         L.append("   （长视频分块模式：最前面写一节 `## 内容概要` 概括全局；之后每个时间段各写一节"
@@ -481,7 +501,8 @@ def _render_brief_md(p):
         L.append("   图片下方再单独一行加居中跳转链接（N 与上方一致）：")
         L.append("   `<div align=\"center\">图 N {主题} — <a href=\"{跳转链接}\" target=\"_blank\" rel=\"noopener noreferrer\">▶ {时间点}</a></div>`")
     L.append("   - 每张图**恰好插入一次**，分散在正文各处，严禁堆在文末。")
-    L.append("   - 图号 N 按插入顺序从 1 递增（`图 1`、`图 2`…）。")
+    L.append("   - **全篇所有图片共用一条编号序列**（截图与 Mermaid 图一起排），"
+             "按正文出现顺序从 1 连续递增，不要另起编号，也不要跳号。")
     L.append("   - 若截图/字幕里是流程图、架构图、公式、代码或操作步骤，正文要用文字把逻辑讲清，让人不看图也懂。")
     if not p["frames"]:
         L.append("   （本视频无配图，忽略本条，写纯文字笔记。）")
@@ -506,9 +527,15 @@ def _render_brief_md(p):
              "不得只写前半段，不得凭空编造时间点。每 5 分钟内容都必须有对应段落。")
     L.append("   - 不出现「本视频」「UP主」「这个视频」之类口语，直接讲内容本身。")
     L.append("   - 全文简体中文。")
-    L.append(f"{n_spec + 2}. **字数控制**：本笔记目标约 **{p['target_chars']}** 字"
-             "（允许 +15%，但**不得低于目标的 80%**）。信息密度优先——不要注水凑字数，"
-             "但更不允许把课程压缩成目录式摘要。")
+    rng = p.get("target_range") or [p.get("target_chars", 0)]
+    L.append(f"{n_spec + 2}. **篇幅参考**：约 **{rng[0]}–{rng[-1]}** 字（**区间，不是硬指标**）。")
+    L.append("   - 这个区间由「素材信息量 × 目标受众」推出，用来判断是否压缩过头或注水，"
+             "不是必须写满的任务。先按主题与受众定大纲、定讲法，字数自然落位。")
+    L.append(f"   - 明显低于 {rng[0]} 字，通常说明有内容被压缩或遗漏；"
+             f"明显高于 {rng[-1]} 字，通常说明重复或注水。两者都应回看素材而不是硬凑。")
+    if p.get("failed_extract"):
+        L.append(f"   - 注意：以下截图的图内文字提取失败，只能依据主题与时间点使用，"
+                 f"不要臆造图中细节：{'、'.join(p['failed_extract'])}")
     L.append("")
 
     if p["frames"]:
@@ -529,7 +556,8 @@ def _render_brief_md(p):
         L.append("请按下列时间段分别撰写 `## 第N段（起-止）` 章节（内部 `###` 小节），最后用一次轻量合成写最前的 `## 内容概要`。")
         L.append("")
         for seg in p["segments"]:
-            L.append(f"### 第{seg['index']}段（{seg['start']}–{seg['end']}）目标约 {seg['target_chars']} 字")
+            seg_rng = seg.get("target_range") or [seg.get("target_chars", 0)]
+            L.append(f"### 第{seg['index']}段（{seg['start']}–{seg['end']}）篇幅参考约 {seg_rng[0]}–{seg_rng[-1]} 字")
             L.append("")
             if seg["frames"]:
                 L.append("本段截图（按时间排序）：")
@@ -562,8 +590,9 @@ def _render_brief_md(p):
     return "\n".join(L) + "\n"
 
 
-def generate_chunked(title, entries, frames, segs, template, target,
-                     api_key, base_url, model, img_prefix, mind_map=False, context=""):
+def generate_chunked(title, entries, frames, segs, template, target_range,
+                     api_key, base_url, model, img_prefix, mind_map=False,
+                     context="", audience="informed"):
     """
     长视频切块生成：每段取自身字幕切片+该段帧，按学科模板独立生成一节（## 章节，
     内部 ### 小节），最后用一次轻量调用合成全局「内容概要」置于最前；插图全局统一编号。
@@ -577,7 +606,8 @@ def generate_chunked(title, entries, frames, segs, template, target,
         seg_sub = "\n".join(f"[{fmt_ts(sec)}] {t}" for sec, t in seg_entries)
         seg_frames = [f for f in frames if s0 <= f["seconds"] < s1]
         weight = len(seg_entries) / total_entries
-        seg_target = max(600, int(target * weight))
+        seg_lo = max(400, int(target_range[0] * weight))
+        seg_hi = max(seg_lo + 300, int(target_range[1] * weight))
         # 章节内省略全局概述小节（全局概述放最前），小节用 ###
         chap_template = dict(template)
         outline = chap_template.get("outline", [])
@@ -587,8 +617,8 @@ def generate_chunked(title, entries, frames, segs, template, target,
             f"{title}（第{idx}/{n}段，{fmt_ts(s0)}–{fmt_ts(s1)}）",
             build_frames_desc(seg_frames) if seg_frames else "",
             seg_sub or "（本段无字幕，请仅依据截图信息撰写）",
-            chap_template, seg_target, has_frames=bool(seg_frames), sub_level=3,
-            mind_map=mind_map, context=context)
+            chap_template, (seg_lo, seg_hi), has_frames=bool(seg_frames), sub_level=3,
+            mind_map=mind_map, context=context, audience=audience)
         print(f"[md] 生成第 {idx}/{n} 段（{fmt_ts(s0)}–{fmt_ts(s1)}，"
               f"{len(seg_entries)} 条字幕，{len(seg_frames)} 帧）...")
         body_i = strip_code_fence(call_llm(prompt, api_key, base_url, model))
@@ -848,6 +878,9 @@ def main():
     ap.add_argument("--output", required=True)
     ap.add_argument("--subject", default=None,
                     help="学科桶(tech/humanities/social_philosophy/general)，缺省自动分类")
+    ap.add_argument("--audience", default=None,
+                    choices=["professional", "informed", "beginner"],
+                    help="目标受众水平，决定篇幅区间（缺省自动判断）")
     ap.add_argument("--desc", default="", help="视频简介，用于学科自动分类")
     ap.add_argument("--context-file", default=None,
                     help="补充素材文本（如小红书作者正文/简介），融入提示词供参考")
@@ -903,21 +936,33 @@ def main():
         print(f"[md] 补充素材 {len(context)} 字")
 
     title = args.title or args.bvid
-    subject = args.subject or classify_subject(
-        title, args.desc, subtitle[:800], args.api_key, args.base_url, args.model)
+    profile = {"subject": args.subject or "", "audience": args.audience or "",
+               "reason": "命令行指定"}
+    if not (args.subject and args.audience):
+        auto = classify_profile(title, args.desc, subtitle[:800],
+                                args.api_key, args.base_url, args.model)
+        profile["subject"] = args.subject or auto.get("subject", "general")
+        profile["audience"] = args.audience or auto.get("audience", "informed")
+        profile["reason"] = auto.get("reason", "")
+    subject = profile["subject"]
+    audience = profile["audience"] or "informed"
     template = SUBJECT_TEMPLATES.get(subject) or SUBJECT_TEMPLATES.get("general")
     if not SUBJECT_TEMPLATES:  # note_subject 未导入时的降级模板
         template = {"role": "你是一名擅长做学习笔记的助手。",
                     "label": "通用",
                     "outline": ["内容概要", "核心内容", "核心要点回顾"],
                     "guidance": "用通俗语言讲清机制。"}
-    target = compute_note_budget(
-        duration=args.duration, subtitle_chars=len(subtitle),
-        evidence_blocks=len(frames),
-        comment_count=(200 if args.comment_enabled else 0),
-        stats={"view": args.stat_view, "like": args.stat_like,
-               "favorite": args.stat_favorite})
-    print(f"[md] 学科：{subject}（{template.get('label')}）  目标字数：{target}")
+    # 篇幅只由「内容信息量 × 受众水平」决定：字幕 + 图中文字（截图 OCR），
+    # 与时长/帧数/播放量无关
+    evidence_chars = sum(len(f.get("content") or "") for f in frames)
+    target_range = compute_note_budget(
+        subtitle_chars=len(subtitle), audience=audience, subject=subject,
+        evidence_chars=evidence_chars)
+    print(f"[md] 学科：{subject}（{template.get('label')}）  "
+          f"受众：{audience}（{AUDIENCE_LABELS.get(audience, audience)}）"
+          f" 依据：{profile.get('reason') or '-'}")
+    print(f"[md] 篇幅区间：{target_range[0]}–{target_range[1]} 字"
+          f"（内容 {len(subtitle)} 字）")
 
     # 长视频切块：解析字幕时间戳（emit 模式也需要，用于分块简报）
     entries = parse_subtitle_entries(args.subtitle)
@@ -928,8 +973,9 @@ def main():
     if args.emit_brief:
         brief_md, brief_json = emit_brief(
             title=title, bvid=args.bvid, page=args.page, frames=frames,
-            subtitle=subtitle, template=template, target=target,
-            entries=entries, segs=segs, args=args, mind_map=mind_map, context=context)
+            subtitle=subtitle, template=template, target_range=target_range,
+            audience=audience, entries=entries, segs=segs, args=args,
+            mind_map=mind_map, context=context)
         print(f"[brief] 已导出 Agent 原生模式简报：{brief_md}")
         print(f"[brief] 请宿主 Agent 按简报撰写 {args.output}，再运行 "
               f"`python md2pdf.py --input {args.output}`")
@@ -942,15 +988,16 @@ def main():
 
     if len(segs) > 1:
         print(f"[md] 长视频切块模式：{len(segs)} 段（每段约 {args.segment_minutes} 分钟）")
-        body = generate_chunked(title, entries, frames, segs, template, target,
+        body = generate_chunked(title, entries, frames, segs, template, target_range,
                                 args.api_key, args.base_url, args.model, args.img_prefix,
-                                mind_map=mind_map, context=context)
+                                mind_map=mind_map, context=context, audience=audience)
     else:
         prompt = build_prompt(
             title,
             build_frames_desc(frames) if frames else "",
             subtitle or "（无字幕，请仅依据截图信息撰写）",
-            template, target, has_frames=bool(frames), mind_map=mind_map, context=context)
+            template, target_range, has_frames=bool(frames), mind_map=mind_map,
+            context=context, audience=audience)
         print(f"[md] 调用 {args.model} 生成正文 ...")
         body = strip_code_fence(call_llm(prompt, args.api_key, args.base_url, args.model))
         if frames:
@@ -962,12 +1009,15 @@ def main():
     # 过度压缩（旧逻辑把阈值封顶在 4000 字，导致 1.5 小时课程写成 3k 字也不告警）。
     body_chars = len(re.sub(r"\s", "", re.sub(r"```.*?```", "", body, flags=re.DOTALL)))
     sub_chars = len(re.sub(r"\s", "", subtitle or ""))
-    min_expected = max(1200, int(target * 0.8))
-    if body_chars < min_expected:
-        print(f"[warn] 正文仅约 {body_chars} 字（字幕 {sub_chars} 字，目标 {target} 字，"
-              f"下限 {min_expected} 字），疑似 {args.model} 输出能力不足或过度压缩")
+    lo, hi = target_range
+    if body_chars < lo:
+        print(f"[warn] 正文仅约 {body_chars} 字（字幕 {sub_chars} 字，参考区间 {lo}–{hi} 字），"
+              f"低于区间下限，疑似 {args.model} 输出能力不足或有内容被压缩")
         print("[warn] 建议：① 询问用户是否切换到更强的 TEXT_MODEL；"
               "② 或加 --emit-brief 由宿主 Agent 撰写笔记（无需外部 Key）")
+    elif body_chars > hi * 1.15:
+        print(f"[warn] 正文约 {body_chars} 字，明显超出参考区间 {lo}–{hi} 字，"
+              "疑似重复或注水，建议压缩而非继续扩写")
 
     n_frames = len(frames)
     label = args.source_label or ""
