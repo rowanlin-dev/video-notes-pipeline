@@ -49,10 +49,14 @@
 
 ## 代码风格
 
-- 保持简洁，避免冗余
-- 新增脚本请在顶部添加清晰的 docstring
-- 不要在代码中硬编码个人 API key 或 Cookie
-- 修改后运行 `python -m py_compile scripts/*.py` 确认语法正确
+完整规范见 [`docs/designs/engineering-standards/06-代码可读性与注释.md`](docs/designs/engineering-standards/06-代码可读性与注释.md)。以下是底线四条：
+
+- **注释写 why，不写 what**；新增脚本顶部要有模块 docstring。
+- **禁止静默失败**：`except` 要么恢复并打印 `[warn]`，要么重新抛出；不允许 `except: pass`。
+- **错误信息包含三件事**：哪一步、哪个文件、怎么恢复。
+- **不在代码里硬编码** Key、Cookie、本机绝对路径。
+
+提交前至少运行 `python -m py_compile scripts/*.py`；改动流水线阶段时，用 `--from-step N` 验证该阶段可单独重跑。
 
 ## 改进笔记质量
 

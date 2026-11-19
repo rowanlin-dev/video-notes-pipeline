@@ -189,7 +189,8 @@ def resolve_pages(bvid: str, data: dict, args) -> list:
 
 
 # ---------------------------------------------------------------- 单P处理
-def process_page(bvid: str, page: int, args, data: dict, comment_block: str = "", subject: str = "general"):
+def process_page(bvid: str, page: int, args, data: dict, comment_block: str = "",
+                 subject: str = "general", audience: str = "informed"):
     """执行单个分P 的 Step1~7，目录按分P 隔离。"""
     run_dir = Path(args.runs_dir) / f"{bvid}_p{page}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -215,7 +216,12 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
     title = args.title or page_title(data, page) or f"{bvid}_P{page}"
     desc = data.get("desc", "") or ""
     stat = data.get("stat") or {}
-    duration = data.get("duration", 0) or 0
+    # 单P时长：优先取本分P 的 duration，避免多P视频把整稿时长当成单P预算依据
+    pages_meta = data.get("pages") or []
+    duration = 0
+    if 0 < page <= len(pages_meta):
+        duration = pages_meta[page - 1].get("duration") or 0
+    duration = duration or data.get("duration", 0) or 0
     print(f"\n{'#' * 64}\n[pipeline] {bvid} 分P {page} / 共 "
           f"{len(data.get('pages') or [page])}\n[pipeline] 标题：{title}\n"
           f"[pipeline] 学科分类：{subject}\n"
@@ -340,6 +346,7 @@ def process_page(bvid: str, page: int, args, data: dict, comment_block: str = ""
                "--img-prefix", "images",
                "--output", note_md,
                "--subject", subject,
+               "--audience", audience,
                "--desc", desc,
                "--duration", str(duration),
                "--comment-enabled", "1" if comment_block else "0",
@@ -534,8 +541,11 @@ def main():
     tm = os.getenv("TEXT_MODEL") or "glm-4-flash"
     _title = data.get("title") or args.bvid
     _desc = data.get("desc") or ""
-    subject = note_subject.classify_subject(_title, _desc, "", tk, tb, tm)
-    print(f"[pipeline] 学科分类：{subject}")
+    profile = note_subject.classify_profile(_title, _desc, "", tk, tb, tm)
+    subject = profile.get("subject", "general")
+    audience = profile.get("audience", "informed")
+    print(f"[pipeline] 学科分类：{subject}  受众：{audience}"
+          f"（{profile.get('reason') or '-'}）")
 
     # 评论区区块：按视频（bvid）抓取一次，供各分P 共用
     comment_block = ""
@@ -550,7 +560,8 @@ def main():
     results = []
     for p in pages_to_do:
         try:
-            process_page(args.bvid, p, args, data, comment_block, subject=subject)
+            process_page(args.bvid, p, args, data, comment_block,
+                         subject=subject, audience=audience)
             results.append((p, "ok"))
         except SystemExit as e:
             if e.code in (0, None):

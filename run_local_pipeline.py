@@ -355,6 +355,19 @@ def main():
             shutil.copy2(str(f), str(img_dir / f.name))
 
         note_md = out_dir / f"{safe_name(title)}.md"
+        # 学科 + 受众：本地视频此前被硬编码为 general，导致学科模板与篇幅区间从不生效
+        sys.path.insert(0, str(SCRIPTS))
+        try:
+            import note_subject
+            prof = note_subject.classify_profile(
+                title, args.desc or "", "",
+                os.getenv("TEXT_API_KEY") or os.getenv("VISION_API_KEY", ""),
+                os.getenv("TEXT_BASE_URL") or os.getenv("VISION_BASE_URL", ""),
+                os.getenv("TEXT_MODEL") or "glm-4-flash")
+        except Exception as e:
+            print(f"[warn] 学科/受众分类失败，回退 general/informed：{e}")
+            prof = {"subject": "general", "audience": "informed"}
+        print(f"[pipeline] 学科：{prof['subject']}  受众：{prof['audience']}")
         cmd = [PY, ROOT / "md_note.py",
                "--bvid", bvid, "--page", str(page), "--title", title,
                "--source-url", args.source_url,
@@ -365,7 +378,8 @@ def main():
                "--interval", str(args.interval),
                "--img-prefix", "images",
                "--output", note_md,
-               "--subject", "general",
+               "--subject", prof["subject"],
+               "--audience", prof["audience"],
                "--desc", args.desc or f"本地视频：{video_path.name}",
                "--duration", str(int(duration)),
                "--comment-enabled", "0",

@@ -578,8 +578,20 @@ def extract_scene_frames(video_path: str, threshold: float = 0.04, merge_gap: fl
     if not timestamps:
         # Fallback: 场景切换为 0 时，固定间隔帧仍写入 scene/，
         # 保证下游 Step 2/3 从 scene/ 能读到帧（旧实现写进 fixed/ 导致空目录崩流程）。
-        print("[scene] No scene changes detected, falling back to fixed 30s interval (into scene/)")
-        return extract_fixed_frames(video_path, 30, out_dir=out_dir)
+        # 间隔按总时长自适应（目标约 40 帧，夹在 8~30 秒）：
+        # 纯口播/浏览器实录类视频用固定 30s 会漏掉关键状态（如 6 分钟视频只有 13 帧）。
+        try:
+            _probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", video_path],
+                capture_output=True, text=True)
+            _dur = float(_probe.stdout.strip() or 0)
+        except Exception:
+            _dur = 0.0
+        interval = int(max(8, min(30, round(_dur / 40)))) if _dur else 30
+        print(f"[scene] No scene changes detected, falling back to fixed {interval}s "
+              f"interval (into scene/)")
+        return extract_fixed_frames(video_path, interval, out_dir=out_dir)
 
     # Pass 2: cluster nearby timestamps (within merge_gap seconds)
     clusters = []
