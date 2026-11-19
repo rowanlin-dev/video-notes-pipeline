@@ -15,8 +15,18 @@ local_overrides*
 trash_learned.json
 使用说明.md
 
-# 本地开发规范文档（docs/dev-standards 等，仅本地留存，不入库）
-docs/
+# 文档：工程文档默认随仓库公开，便于共建
+# 以下为私有区与素材，不入库
+docs/retro/
+docs/personal-docs/
+# 文档内引用的真实素材（第三方视频、字幕、截图、PDF）有版权与体积问题
+docs/**/assets/
+docs/**/*.pdf
+docs/**/*.mp4
+docs/**/*.srt
+docs/**/*_subtitles.*
+docs/**/frames/
+docs/**/images/
 
 # Python
 __pycache__/
